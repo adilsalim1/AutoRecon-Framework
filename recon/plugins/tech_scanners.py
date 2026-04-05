@@ -100,7 +100,7 @@ class WhatWebScannerPlugin(ScannerPlugin):
         bin_path = resolve_binary(context.metadata.get("tool_paths") or {}, "whatweb", "whatweb")
         timeout = max(60, _timeout(ctx=context, default=180))
         last_err = ""
-        for _scheme, url in _urls_for_host(host):
+        for scheme, url in _urls_for_host(host):
             proc = _run_tool_ctx(
                 context,
                 [
