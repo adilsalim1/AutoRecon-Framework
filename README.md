@@ -304,6 +304,3 @@ AutoRecon-Framework/
 
 ---
 
-## License
-
-Add your preferred license file to this repository if you distribute the framework.
