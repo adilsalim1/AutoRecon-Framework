@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from recon.models.assets import Asset, AssetType, Priority
+from recon.utils.hostscope import hostname_in_scope, normalize_discovery_hostname
 
 
 class AssetAnalyzer:
@@ -18,12 +19,27 @@ class AssetAnalyzer:
     def _dedupe(self, assets: list[Asset]) -> list[Asset]:
         out: list[Asset] = []
         for a in assets:
+            if not self._identifier_plausible(a):
+                continue
             key = a.identifier.lower().rstrip(".")
             if key in self._seen:
                 continue
             self._seen.add(key)
             out.append(a)
         return out
+
+    def _identifier_plausible(self, a: Asset) -> bool:
+        """Drop path-like or out-of-scope hostnames from noisy discovery (e.g. amass)."""
+        if a.asset_type == AssetType.JAVASCRIPT:
+            return True
+        ident = (a.identifier or "").strip()
+        if ident.lower().startswith("http://") or ident.lower().startswith("https://"):
+            return True
+        parent = (a.parent_domain or "").strip().lower().rstrip(".")
+        if not parent:
+            return True
+        h = normalize_discovery_hostname(ident)
+        return bool(h and hostname_in_scope(h, parent))
 
     def _classify(self, asset: Asset) -> Asset:
         tags = set(asset.tags)

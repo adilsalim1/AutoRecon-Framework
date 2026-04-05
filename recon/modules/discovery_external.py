@@ -7,20 +7,23 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from urllib.parse import urlparse
+from pathlib import Path
 
 from recon.core.logger import get_logger
 from recon.models.assets import Asset, AssetType
 from recon.modules.discovery import DiscoveryProvider
+from recon.utils.hostscope import hostname_in_scope, normalize_discovery_hostname
 from recon.utils.tool_runner import resolve_binary, run_tool
 
 log = get_logger("discovery")
 
 
 def _host_asset(host: str, parent: str, source: str, **meta: object) -> Asset | None:
-    host = host.strip().lower().rstrip(".")
-    if not host or "*" in host or " " in host:
+    parent_n = parent.strip().lower().rstrip(".")
+    host = normalize_discovery_hostname(host)
+    if not host or not hostname_in_scope(host, parent_n):
         return None
-    at = AssetType.DOMAIN if host == parent else AssetType.SUBDOMAIN
+    at = AssetType.DOMAIN if host == parent_n else AssetType.SUBDOMAIN
     return Asset(
         identifier=host,
         asset_type=at,
@@ -116,35 +119,60 @@ class AmassPassiveDiscoveryProvider(DiscoveryProvider):
 
     def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
         parent = domain.strip().lower().rstrip(".")
-        log.info("amass (passive): enumerating %s", parent)
-        for args in (
+        log.info(
+            "amass (passive): enumerating %s (timeout %ss)",
+            parent,
+            self._timeout,
+        )
+        # Amass redraws a TTY progress bar; with piped stderr every tick becomes a new
+        # "[amass:stderr]" line. Stream only pollutes logs — output is still captured.
+        stream_amass = False
+        arg_variants = (
             ["enum", "-passive", "-d", parent, "-nocolor"],
             ["enum", "-passive", "-d", parent],
-        ):
+        )
+        proc = None
+        for args in arg_variants:
             proc = run_tool(
                 [self._bin, *args],
                 timeout=self._timeout,
-                live_output=self._stream,
+                live_output=stream_amass,
                 live_prefix="amass",
             )
             if proc.stdout.strip():
+                break
+            # exit 124 = framework subprocess timeout — don't chain another full wait
+            if proc.returncode == 124:
+                log.warning(
+                    "amass timed out after %ss; set discovery.amass_timeout_seconds higher if needed",
+                    self._timeout,
+                )
                 break
         else:
             proc = run_tool(
                 [self._bin, "enum", "-passive", "-d", parent],
                 timeout=self._timeout,
-                live_output=self._stream,
+                live_output=stream_amass,
                 live_prefix="amass",
             )
-        if proc.returncode != 0 and not proc.stdout.strip():
-            log.warning("amass exit=%s stderr=%s", proc.returncode, proc.stderr[:300])
+        if proc is None:
+            return []
+        if proc.returncode != 0 and not proc.stdout.strip() and proc.returncode != 124:
+            log.warning(
+                "amass exit=%s stderr=%s",
+                proc.returncode,
+                (proc.stderr or "")[:300],
+            )
         out: list[Asset] = []
-        for line in proc.stdout.splitlines():
+        for line in (proc.stdout or "").splitlines():
             line = line.strip()
-            if not line or line.startswith("[") or " " in line and "." not in line.split()[0]:
+            if not line or line.startswith("[") or line.startswith("#"):
                 continue
-            host = line.split()[0].lower().rstrip(".")
-            a = _host_asset(host, parent, "amass_passive")
+            token = line.split()[0]
+            # Amass prints paths/dat dirs (e.g. language_classifier/) — not hostnames
+            if "/" in token or not any(c.isalnum() for c in token):
+                continue
+            a = _host_asset(token, parent, "amass_passive")
             if a:
                 out.append(a)
         log.info("amass: parsed %s hosts for %s", len(out), parent)
@@ -296,10 +324,20 @@ class MassDnsDiscoveryProvider(DiscoveryProvider):
         return []
 
 
+def _github_subdomains_has_credentials() -> bool:
+    """github-subdomains requires -t, GITHUB_TOKEN, or a `.tokens` file in cwd (upstream behavior)."""
+    if (os.environ.get("GITHUB_TOKEN") or "").strip():
+        return True
+    try:
+        return Path(".tokens").is_file()
+    except OSError:
+        return False
+
+
 class GithubSubdomainsDiscoveryProvider(DiscoveryProvider):
     """
     [gwen001/github-subdomains](https://github.com/gwen001/github-subdomains) — code search on GitHub for hostnames.
-    Requires a GitHub token: `GITHUB_TOKEN` env var, `-t` via wrapper, or `.tokens` in the process working directory.
+    Requires a GitHub token: `GITHUB_TOKEN` env var (e.g. in `.env`), or `.tokens` in the process cwd.
     """
 
     def __init__(
@@ -314,11 +352,12 @@ class GithubSubdomainsDiscoveryProvider(DiscoveryProvider):
 
     def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
         parent = domain.strip().lower().rstrip(".")
-        if not (os.environ.get("GITHUB_TOKEN") or "").strip():
+        if not _github_subdomains_has_credentials():
             log.info(
-                "github-subdomains: GITHUB_TOKEN unset — binary may still use a `.tokens` file in cwd "
-                "(see https://github.com/gwen001/github-subdomains)"
+                "github-subdomains skipped: no GITHUB_TOKEN and no `.tokens` in cwd — "
+                "add `GITHUB_TOKEN=...` to `.env` or see https://github.com/gwen001/github-subdomains"
             )
+            return []
         log.info("github-subdomains: searching GitHub code for %s", parent)
         proc = run_tool(
             [self._bin, "-d", parent, "-raw"],

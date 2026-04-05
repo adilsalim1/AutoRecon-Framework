@@ -11,7 +11,6 @@ bootstrap:
 tools:
   subfinder: subfinder
   assetfinder: assetfinder
-  amass: amass
   waybackurls: waybackurls
   github_subdomains: github-subdomains
   shuffledns: shuffledns
@@ -30,12 +29,15 @@ tools:
   whatweb: whatweb
   wappalyzer: wappalyzer
 
-# Defaults (if omitted): crtsh, subfinder, waybackurls, assetfinder, amass_passive,
-# github_subdomains, shuffledns, massdns — set discovery.wordlist + discovery.resolvers for shuffledns brute.
+# Defaults (if omitted): crtsh, subfinder, waybackurls, assetfinder, github_subdomains,
+# shuffledns, massdns — add amass_passive + tools.amass if you want OWASP Amass again.
+# shuffledns needs discovery.wordlist + discovery.resolvers.
 discovery:
   enabled: true
   expand_subdomains: true
   timeout_seconds: 300
+  # Passive amass often needs >5m; default 1800. Increase if logs show exit 124 (subprocess timeout).
+  # amass_timeout_seconds: 1800
   wordlist: ""
   resolvers: ""
 

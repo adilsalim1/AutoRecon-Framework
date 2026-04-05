@@ -7,7 +7,6 @@
   "tools": {
     "subfinder": "subfinder",
     "assetfinder": "assetfinder",
-    "amass": "amass",
     "github_subdomains": "github-subdomains",
     "shuffledns": "shuffledns",
     "waybackurls": "waybackurls",

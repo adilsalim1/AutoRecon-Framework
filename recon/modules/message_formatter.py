@@ -10,10 +10,11 @@ from typing import Any
 from recon.models.assets import Asset
 from recon.models.findings import Finding, Severity
 
-# Discord limits
-_MAX_DESC = 4000
+# Discord limits (embed description max 4096; stay slightly below)
+_MAX_DESC = 4080
 _MAX_FIELD = 1000
 _MAX_codeblock = 900
+_MAX_EMBEDS_PER_MESSAGE = 10
 
 
 def _code_block(content: str, lang: str = "json") -> str:
@@ -97,36 +98,102 @@ def format_webhook_with_embeds(
     return out
 
 
-def format_asset_discovery_payload(
+def _consume_lines_up_to_budget(lines: list[str], budget: int) -> tuple[str, list[str]]:
+    """Join leading lines until character budget (for Discord embed description)."""
+    if budget <= 0:
+        return "", lines
+    if not lines:
+        return "", []
+    buf: list[str] = []
+    used = 0
+    i = 0
+    for i, line in enumerate(lines):
+        need = len(line) + (1 if buf else 0)
+        if used + need > budget:
+            if not buf and need > budget:
+                buf.append(line[: max(0, budget - 3)] + "…")
+                i += 1
+            break
+        buf.append(line)
+        used += need
+    else:
+        i = len(lines)
+    return "\n".join(buf), lines[i:]
+
+
+def format_asset_discovery_payloads(
     assets: list[Asset],
     run_id: str,
     domain: str,
-    *,
-    max_list: int = 40,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
+    """
+    Full host list split across Discord embeds (4096 chars each), then across
+    multiple webhook posts if needed (10 embeds max per POST).
+    """
     by_type: dict[str, int] = {}
     for a in assets:
         k = a.asset_type.value
         by_type[k] = by_type.get(k, 0) + 1
-    lines = [f"`{a.identifier}` · _{a.asset_type.value}_ · **{a.priority.value}**" for a in assets[:max_list]]
-    extra = len(assets) - max_list
-    body = "\n".join(lines) if lines else "_No assets_"
-    if extra > 0:
-        body += f"\n\n_…and {extra} more_"
-    desc = (
+    lines = [
+        f"`{a.identifier}` · _{a.asset_type.value}_ · **{a.priority.value}**"
+        for a in assets
+        if (a.identifier or "").strip()
+    ]
+    prefix = (
         f"**Scope:** `{domain}`\n**Run:** `{run_id}`\n**Total:** `{len(assets)}`\n\n"
         f"**By type:**\n{_code_block(json.dumps(by_type, indent=2), 'json')}\n\n"
-        f"**Sample:**\n{body[:2800]}"
-    )[:_MAX_DESC]
-    embed = {
-        "title": "Asset discovery",
-        "description": desc,
-        "color": 0x2ECC71,
-    }
-    return format_webhook_with_embeds(
-        f"[ASSETS] **{len(assets)}** host(s) · `{domain}` · run `{run_id}`",
-        [embed],
     )
+    hdr_main = "**All hosts:**\n"
+    hdr_cont = f"**All hosts ·** `{domain}` **(continued)**\n"
+
+    embeds: list[dict[str, Any]] = []
+    remaining = lines[:]
+    idx = 0
+    while True:
+        if idx == 0:
+            head = prefix + hdr_main
+        else:
+            if not remaining:
+                break
+            head = hdr_cont
+        room = max(200, _MAX_DESC - len(head))
+        body, remaining = _consume_lines_up_to_budget(remaining, room)
+        if idx == 0 and not body:
+            body = "_No assets_" if not lines else body
+        if not body:
+            break
+        title = "Asset discovery" if idx == 0 else f"Asset discovery · continued ({idx + 1})"
+        embeds.append(
+            {
+                "title": title[:256],
+                "description": (head + body)[:_MAX_DESC],
+                "color": 0x2ECC71,
+            }
+        )
+        idx += 1
+        if idx > 500:
+            break
+
+    if not embeds:
+        embeds = [
+            {
+                "title": "Asset discovery",
+                "description": (prefix + hdr_main + "_No assets_")[:_MAX_DESC],
+                "color": 0x2ECC71,
+            }
+        ]
+
+    total_msgs = (len(embeds) + _MAX_EMBEDS_PER_MESSAGE - 1) // _MAX_EMBEDS_PER_MESSAGE
+    payloads: list[dict[str, Any]] = []
+    for mi in range(total_msgs):
+        batch = embeds[mi * _MAX_EMBEDS_PER_MESSAGE : (mi + 1) * _MAX_EMBEDS_PER_MESSAGE]
+        content = (
+            f"[ASSETS] **{len(assets)}** host(s) · `{domain}` · run `{run_id}`"
+        )
+        if total_msgs > 1:
+            content += f" · _part {mi + 1}/{total_msgs}_"
+        payloads.append(format_webhook_with_embeds(content, batch))
+    return payloads
 
 
 def format_critical_subdomain_payload(asset: Asset, run_id: str, domain: str) -> dict[str, Any]:

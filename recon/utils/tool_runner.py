@@ -56,24 +56,9 @@ def httpx_binary_is_projectdiscovery(bin_path: str) -> bool:
     return ok
 
 
-def resolve_httpx_binary(tool_paths: dict[str, str]) -> str:
-    """
-    Resolve httpx for scanning: prefer explicit `tools.httpx`, then Go install path,
-    then first `httpx` on PATH that looks like ProjectDiscovery (not Encode/python-httpx).
-    """
-    explicit = (tool_paths.get("httpx") or "").strip()
-    if explicit:
-        p = Path(explicit).expanduser()
-        chosen = str(p.resolve()) if p.is_file() else explicit
-        if chosen and not httpx_binary_is_projectdiscovery(chosen):
-            _log.warning(
-                "tools.httpx (%s) does not look like ProjectDiscovery httpx; "
-                "expect JSON probe output. Install: go install github.com/projectdiscovery/httpx/cmd/httpx@latest",
-                chosen,
-            )
-        return chosen
-
-    candidates: list[str] = []
+def _go_bin_httpx_candidates() -> list[str]:
+    """Absolute paths where `go install` typically places httpx."""
+    out: list[str] = []
     seen: set[str] = set()
 
     def add_file(path: Path) -> None:
@@ -83,7 +68,7 @@ def resolve_httpx_binary(tool_paths: dict[str, str]) -> str:
                 s = str(path.resolve())
                 if s not in seen:
                     seen.add(s)
-                    candidates.append(s)
+                    out.append(s)
         except OSError:
             pass
 
@@ -104,23 +89,54 @@ def resolve_httpx_binary(tool_paths: dict[str, str]) -> str:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
     add_file(Path.home() / "go" / "bin" / "httpx")
+    return out
 
-    for cand in candidates:
+
+def resolve_httpx_binary(tool_paths: dict[str, str]) -> str:
+    """
+    Resolve httpx for scanning: explicit `tools.httpx` only if it is ProjectDiscovery
+    httpx; otherwise prefer `$(go env GOPATH)/bin/httpx`, then any PATH `httpx` that
+    passes the PD heuristic (never return pip's Encode httpx if a PD binary exists).
+    """
+    explicit = (tool_paths.get("httpx") or "").strip()
+    if explicit:
+        p = Path(explicit).expanduser()
+        if p.is_file():
+            chosen = str(p.resolve())
+            if httpx_binary_is_projectdiscovery(chosen):
+                return chosen
+            _log.warning(
+                "tools.httpx (%s) is not ProjectDiscovery httpx — trying Go-installed binary. "
+                "Install: go install github.com/projectdiscovery/httpx/cmd/httpx@latest",
+                chosen,
+            )
+        else:
+            resolved = shutil.which(explicit) or explicit
+            if httpx_binary_is_projectdiscovery(resolved):
+                return resolved
+            _log.warning(
+                "tools.httpx (%r) resolves to %r, which is not ProjectDiscovery httpx "
+                "(often `pip install httpx`). Trying Go bin/httpx next.",
+                explicit,
+                resolved,
+            )
+
+    for cand in _go_bin_httpx_candidates():
         if httpx_binary_is_projectdiscovery(cand):
+            _log.info("Using ProjectDiscovery httpx at %s", cand)
             return cand
 
     which = shutil.which("httpx")
+    if which and httpx_binary_is_projectdiscovery(which):
+        return which
     if which:
-        if httpx_binary_is_projectdiscovery(which):
-            return which
         _log.warning(
-            "First `httpx` on PATH (%s) is not ProjectDiscovery httpx (often `pip install httpx`). "
-            "Use: go install github.com/projectdiscovery/httpx/cmd/httpx@latest "
-            "and set tools.httpx to \"$(go env GOPATH)/bin/httpx\".",
+            "`httpx` on PATH (%s) is not ProjectDiscovery httpx. "
+            "Run: go install github.com/projectdiscovery/httpx/cmd/httpx@latest "
+            "and set tools.httpx to the full path from `go env GOPATH`/bin/httpx.",
             which,
         )
-        return which
-    return "httpx"
+    return which or explicit or "httpx"
 
 
 def run_tool(

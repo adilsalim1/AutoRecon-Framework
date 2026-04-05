@@ -49,7 +49,7 @@ def build_discovery(config: AppConfig) -> DiscoveryProvider:
             parts.append(
                 AmassPassiveDiscoveryProvider(
                     config.tool_paths,
-                    timeout=config.discovery.timeout_seconds,
+                    timeout=config.discovery.amass_timeout_seconds,
                     stream_output=stream,
                 )
             )

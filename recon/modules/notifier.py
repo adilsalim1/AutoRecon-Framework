@@ -25,7 +25,7 @@ from recon.modules.discord_router import (
     route_finding_channel,
 )
 from recon.modules.message_formatter import (
-    format_asset_discovery_payload,
+    format_asset_discovery_payloads,
     format_critical_subdomain_payload,
     format_finding_embed,
     format_ports_payload,
@@ -460,8 +460,12 @@ class DiscordMultiChannelNotifier:
         dk = f"{CH_ASSETS}:discovery:{run_id}"
         if self._dedupe(CH_ASSETS, dk):
             return
-        pl = format_asset_discovery_payload(assets, run_id, domain)
-        self._post_now(CH_ASSETS, pl)
+        payloads = format_asset_discovery_payloads(assets, run_id, domain)
+        run_discord_posts_sync(
+            [(url, pl) for pl in payloads],
+            retries=self.http_retries,
+            timeout_seconds=self.http_timeout_seconds,
+        )
 
     def send_critical_subdomain(self, asset: Asset, run_id: str, domain: str) -> None:
         url = self._url(CH_CRITICAL)

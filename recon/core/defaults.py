@@ -16,7 +16,6 @@ DEFAULT_DISCOVERY_PROVIDERS: list[str] = [
     "subfinder",
     "waybackurls",
     "assetfinder",
-    "amass_passive",
     "github_subdomains",
     "shuffledns",
     "massdns",

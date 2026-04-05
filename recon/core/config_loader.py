@@ -100,6 +100,9 @@ class DiscoveryConfig:
     expand_subdomains: bool = True
     providers: list[str] = field(default_factory=lambda: list(DEFAULT_DISCOVERY_PROVIDERS))
     timeout_seconds: int = 300
+    """Subprocess budget for most discovery CLIs (subfinder, waybackurls, …)."""
+    amass_timeout_seconds: int = 1800
+    """Passive `amass enum` often exceeds 5–10 minutes; 1800s (30m) avoids exit 124 on large scopes."""
     wordlist: str = ""
     resolvers: str = ""
 
@@ -266,6 +269,9 @@ class AppConfig:
                 expand_subdomains=d.get("expand_subdomains", True),
                 providers=prov_list,
                 timeout_seconds=int(d.get("timeout_seconds", 300)),
+                amass_timeout_seconds=max(
+                    60, int(d.get("amass_timeout_seconds", 1800))
+                ),
                 wordlist=str(d.get("wordlist", "") or ""),
                 resolvers=str(d.get("resolvers", "") or ""),
             ),
