@@ -1,0 +1,17 @@
+[
+  {
+    "target": "www.example.com",
+    "vulnerability_type": "tls_cert_expiring",
+    "severity": "medium",
+    "evidence": {
+      "days_left": 14
+    },
+    "source_scanner": "mock_scanner",
+    "title": "tls_cert_expiring",
+    "description": "Synthetic finding from mock scanner",
+    "created_at": "2026-04-05T16:53:56.134352+00:00",
+    "asset_id": "9cc76bb92d6117c7",
+    "raw_reference": null,
+    "dedupe_key": "107b93f4f55815ecc5b49a0aa2201a8233be10eec7efe68a5fd05020d307509f"
+  }
+]

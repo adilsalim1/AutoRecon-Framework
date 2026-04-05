@@ -1,0 +1,68 @@
+# Copy to recon.yaml or pass via --config / RECON_* env vars.
+#
+# Discovery providers (merged, deduped): mock, subfinder, assetfinder, amass_passive,
+# crtsh, waybackurls, shuffledns (needs wordlist+resolvers), massdns (stub).
+# Scanner plugins: mock_scanner, httpx_scanner, nuclei_scanner, subjack_scanner,
+# subzy_scanner, wafw00f_scanner (pip install wafw00f), ffuf_scanner (needs wordlist),
+# secretfinder_scanner (needs script path).
+
+domain: example.com
+
+# Auto-install missing CLIs required by enabled discovery/scanner plugins (Go, pip, apt on Debian/Ubuntu).
+# Preflight always logs [OK]/[MISSING] before any install. Use: python recon/main.py --check-tools
+bootstrap:
+  auto_install: true
+
+# Optional: map logical names to absolute binaries (otherwise $PATH).
+tools:
+  subfinder: subfinder
+  assetfinder: assetfinder
+  amass: amass
+  waybackurls: waybackurls
+  shuffledns: shuffledns
+  httpx: httpx
+  nuclei: nuclei
+  subjack: subjack
+  subzy: subzy
+  ffuf: ffuf
+  wafw00f: wafw00f
+  python3: python3
+
+discovery:
+  enabled: true
+  expand_subdomains: true
+  providers:
+    - mock
+  timeout_seconds: 300
+  wordlist: ""
+  resolvers: ""
+
+scanning:
+  enabled: true
+  parallel_workers: 4
+  rate_limit_per_second: 10
+  skip_duplicate_targets: true
+  timeout_seconds: 300
+  ffuf_wordlist: ""
+  secretfinder_script: ""
+  wafw00f_aggressive: false
+  plugins:
+    - mock_scanner
+
+alerts:
+  webhook_url: ""
+  min_severity: high
+  batch_summaries: true
+  deduplicate: true
+
+execution:
+  mode: sequential
+  max_retries: 3
+  retry_backoff_seconds: 1.0
+
+storage:
+  backend: json
+  output_dir: output
+
+log_level: INFO
+log_json: false

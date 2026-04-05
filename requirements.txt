@@ -1,0 +1,4 @@
+pyyaml>=6.0.1
+
+# Optional: WAF detection plugin (wafw00f_scanner)
+# wafw00f>=2.2.0

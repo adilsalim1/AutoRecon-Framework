@@ -1,0 +1,38 @@
+{
+  "8750d3c0a12a3144d27e677a268838d0d0c5d8b46718868a55c0f9cd3de34936": {
+    "scanner": "mock_scanner",
+    "asset": "example.com",
+    "run": "437c8c79-36ad-44e4-b793-7597dc6b0610",
+    "recorded_at": "2026-04-05T16:53:55.929205+00:00"
+  },
+  "4980a3387db8942cafcfbf5b557f3986e541350fbafd59c33e6712d6f9bfa9bc": {
+    "scanner": "mock_scanner",
+    "asset": "www.example.com",
+    "run": "17ad3c0a-966e-4880-b546-db3dd824a82c",
+    "recorded_at": "2026-04-05T16:53:56.134380+00:00"
+  },
+  "1a61d1191d6bf3da4115f768948bb6b020d6ba625c7506134620181539ff107d": {
+    "scanner": "mock_scanner",
+    "asset": "api.example.com",
+    "run": "f2c79f79-d2f0-4cf7-9fb2-9ebd69b631f7",
+    "recorded_at": "2026-04-05T16:53:56.337269+00:00"
+  },
+  "0bf4da1ec5221c3f08756324175156cf2b1c9f9184859e8aaef9fbdb5557b62f": {
+    "scanner": "mock_scanner",
+    "asset": "auth.example.com",
+    "run": "ce61c5b0-9f3a-46d7-be97-e6af40daf5b4",
+    "recorded_at": "2026-04-05T16:53:56.542270+00:00"
+  },
+  "cb114ab30d339bd407a81dcefb46c10c542d14a80a4d5d3c85b038ba99b0fc85": {
+    "scanner": "mock_scanner",
+    "asset": "staging.example.com",
+    "run": "fd8305f3-fac1-4201-9faf-ddbac3bde04a",
+    "recorded_at": "2026-04-05T16:53:56.747305+00:00"
+  },
+  "4e637aeb1f4d8e6ceb2e3a2451e325d47cbdc297518a4dfd7bd1bea880e1d371": {
+    "scanner": "mock_scanner",
+    "asset": "cdn.example.com",
+    "run": "cc92c2b6-cb46-4463-aa2a-8b6574479d55",
+    "recorded_at": "2026-04-05T16:53:56.952537+00:00"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "domain": "example.com",
+  "bootstrap": {
+    "auto_install": true
+  },
+  "tools": {
+    "subfinder": "subfinder",
+    "httpx": "httpx",
+    "nuclei": "nuclei",
+    "wafw00f": "wafw00f"
+  },
+  "discovery": {
+    "enabled": true,
+    "expand_subdomains": true,
+    "providers": ["mock"],
+    "timeout_seconds": 300,
+    "wordlist": "",
+    "resolvers": ""
+  },
+  "scanning": {
+    "enabled": true,
+    "parallel_workers": 4,
+    "rate_limit_per_second": 10,
+    "skip_duplicate_targets": true,
+    "timeout_seconds": 300,
+    "ffuf_wordlist": "",
+    "secretfinder_script": "",
+    "wafw00f_aggressive": false,
+    "plugins": ["mock_scanner"]
+  },
+  "alerts": {
+    "webhook_url": "",
+    "min_severity": "high",
+    "batch_summaries": true,
+    "deduplicate": true
+  },
+  "execution": {
+    "mode": "sequential",
+    "max_retries": 3,
+    "retry_backoff_seconds": 1.0
+  },
+  "storage": {
+    "backend": "json",
+    "output_dir": "output"
+  },
+  "log_level": "INFO",
+  "log_json": false
+}

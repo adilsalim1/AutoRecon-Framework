@@ -1,0 +1,98 @@
+[
+  {
+    "id": "38564b74b4ffcd3b",
+    "identifier": "example.com",
+    "asset_type": "domain",
+    "priority": "medium",
+    "tags": [
+      "apex"
+    ],
+    "metadata": {
+      "source": "mock_discovery",
+      "analyzed": true
+    },
+    "discovered_at": "2026-04-05T17:39:10.203022+00:00",
+    "parent_domain": "example.com"
+  },
+  {
+    "id": "9cc76bb92d6117c7",
+    "identifier": "www.example.com",
+    "asset_type": "web",
+    "priority": "high",
+    "tags": [
+      "surface"
+    ],
+    "metadata": {
+      "source": "mock_discovery",
+      "subdomain": "www",
+      "analyzed": true
+    },
+    "discovered_at": "2026-04-05T17:39:10.203092+00:00",
+    "parent_domain": "example.com"
+  },
+  {
+    "id": "3636ec38767c2253",
+    "identifier": "api.example.com",
+    "asset_type": "api",
+    "priority": "high",
+    "tags": [
+      "high_value"
+    ],
+    "metadata": {
+      "source": "mock_discovery",
+      "subdomain": "api",
+      "analyzed": true
+    },
+    "discovered_at": "2026-04-05T17:39:10.203094+00:00",
+    "parent_domain": "example.com"
+  },
+  {
+    "id": "2b5e17aee0138be3",
+    "identifier": "auth.example.com",
+    "asset_type": "auth",
+    "priority": "critical",
+    "tags": [
+      "high_value",
+      "identity"
+    ],
+    "metadata": {
+      "source": "mock_discovery",
+      "subdomain": "auth",
+      "analyzed": true
+    },
+    "discovered_at": "2026-04-05T17:39:10.203095+00:00",
+    "parent_domain": "example.com"
+  },
+  {
+    "id": "80b1c9c5b727468e",
+    "identifier": "staging.example.com",
+    "asset_type": "web",
+    "priority": "medium",
+    "tags": [
+      "surface"
+    ],
+    "metadata": {
+      "source": "mock_discovery",
+      "subdomain": "staging",
+      "analyzed": true
+    },
+    "discovered_at": "2026-04-05T17:39:10.203096+00:00",
+    "parent_domain": "example.com"
+  },
+  {
+    "id": "a2ecd3ada956150d",
+    "identifier": "cdn.example.com",
+    "asset_type": "web",
+    "priority": "medium",
+    "tags": [
+      "surface"
+    ],
+    "metadata": {
+      "source": "mock_discovery",
+      "subdomain": "cdn",
+      "analyzed": true
+    },
+    "discovered_at": "2026-04-05T17:39:10.203097+00:00",
+    "parent_domain": "example.com"
+  }
+]
