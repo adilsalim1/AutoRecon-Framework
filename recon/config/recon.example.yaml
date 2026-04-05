@@ -28,6 +28,8 @@ tools:
   nmap: nmap
   whatweb: whatweb
   wappalyzer: wappalyzer
+  # semgrep: semgrep
+  # trufflehog: trufflehog
 
 # Defaults (if omitted): crtsh, subfinder, waybackurls, assetfinder, github_subdomains,
 # shuffledns, massdns — add amass_passive + tools.amass if you want OWASP Amass again.
@@ -57,7 +59,9 @@ collection:
 
 # Defaults: all scanners (httpx, wafw00f, nuclei, whatweb, wappalyzer, naabu, nmap,
 # subjack, subzy, ffuf, vhost_ffuf, secretfinder); live_hosts_only false; waf_skip_aggressive false;
-# js_analysis_enabled true; ffuf wordlist = recon/data/ffuf-quick.txt unless overridden.
+# js_analysis_enabled true; js_snitch_enabled true (TruffleHog+Semgrep on collected JS URLs;
+#   see https://github.com/vavkamil/js-snitch — install trufflehog + semgrep or use --install-tools);
+# ffuf wordlist = recon/data/ffuf-quick.txt unless overridden.
 scanning:
   enabled: true
   live_hosts_only: false
@@ -74,11 +78,18 @@ scanning:
   # nmap_scripts: ""
   # nmap_scan_timeout_seconds: 900
   secretfinder_script: ""
+  # secretfinder_max_js_urls: 40  # 0 = only https://host; else run SecretFinder -i on collected JS URLs per host
   wafw00f_aggressive: true
   # waf_skip_aggressive: false   # default: run aggressive scanners even on WAF hosts
   # api_endpoint_priority: true
   # max_js_analyze: 40
   # url_secret_scan_max: 500
+  # js_snitch_enabled: true
+  # js_snitch_max_urls: 500
+  # js_snitch_repo: ""   # path to vavkamil/js-snitch clone for custom-semgrep-templates
+  # js_snitch_fetch_timeout_seconds: 30
+  # js_snitch_trufflehog_timeout_seconds: 900
+  # js_snitch_semgrep_timeout_seconds: 600
 
 alerts:
   webhook_url: ""

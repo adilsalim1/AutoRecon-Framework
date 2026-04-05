@@ -49,7 +49,10 @@
     "secretfinder_script": "",
     "wafw00f_aggressive": true,
     "waf_skip_aggressive": false,
-    "js_analysis_enabled": true
+    "js_analysis_enabled": true,
+    "js_snitch_enabled": true,
+    "js_snitch_max_urls": 500,
+    "js_snitch_repo": ""
   },
   "alerts": {
     "webhook_url": "",

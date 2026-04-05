@@ -1,4 +1,3 @@
-# Bundled starter paths for ffuf_scanner (expand with SecLists / custom lists).
 admin
 api
 api/v1

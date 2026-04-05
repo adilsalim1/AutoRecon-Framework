@@ -31,6 +31,7 @@ from recon.modules.message_formatter import (
     format_ports_payload,
     format_staging_asset_payload,
     format_summary_payload,
+    format_surface_inventory_payload,
     format_tech_profile_payload,
     format_webhook_with_embeds,
 )
@@ -463,6 +464,22 @@ class DiscordMultiChannelNotifier:
             e = pl.get("embeds") or []
             if e:
                 self._buffer_embed(CH_PORTS, e[0])
+
+    def send_surface_inventory(
+        self,
+        inventory: dict[str, Any],
+        run_id: str,
+        domain: str,
+    ) -> None:
+        """Post deduplicated hosts / URLs / paths after enumeration + URL harvest."""
+        url = self._url(CH_ASSETS)
+        if not url:
+            return
+        dk = f"{CH_ASSETS}:surface_inv:{run_id}"
+        if self._dedupe(CH_ASSETS, dk):
+            return
+        pl = format_surface_inventory_payload(inventory, run_id, domain)
+        self._post_now(CH_ASSETS, pl)
 
     def send_asset_discovery(self, assets: list[Asset], run_id: str, domain: str) -> None:
         url = self._url(CH_ASSETS)

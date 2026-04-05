@@ -8,7 +8,10 @@ Optional technology profilers (free / local CLIs only):
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from recon.models.assets import Asset
@@ -197,14 +200,27 @@ class WappalyzerScannerPlugin(ScannerPlugin):
         timeout = max(60, _timeout(ctx=context, default=240))
         last_err = ""
         for _scheme, url in _urls_for_host(host):
-            proc = _run_tool_ctx(
-                context,
-                [bin_path, url],
-                timeout=timeout,
-                tool_label="wappalyzer",
-            )
-            out = (proc.stdout or "").strip()
-            last_err = proc.stderr or last_err
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".txt", delete=False, encoding="utf-8"
+            ) as url_f:
+                url_f.write(url + "\n")
+                url_file = url_f.name
+            json_fd, json_file = tempfile.mkstemp(suffix=".json")
+            os.close(json_fd)
+            try:
+                proc = _run_tool_ctx(
+                    context,
+                    [bin_path, "-i", url_file, "-oJ", json_file],
+                    timeout=timeout,
+                    tool_label="wappalyzer",
+                )
+                out = Path(json_file).read_text(encoding="utf-8", errors="replace").strip()
+                if not out:
+                    out = (proc.stdout or "").strip()
+                last_err = proc.stderr or last_err
+            finally:
+                Path(url_file).unlink(missing_ok=True)
+                Path(json_file).unlink(missing_ok=True)
             if out and out.startswith("["):
                 return RawScanResult(
                     scanner_name=self.name,

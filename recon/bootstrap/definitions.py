@@ -149,6 +149,11 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         pip_package="semgrep>=1.40.0",
     ),
     ToolSpec(
+        key="trufflehog",
+        check_names=("trufflehog",),
+        pip_package="trufflehog",
+    ),
+    ToolSpec(
         key="cewl",
         check_names=("cewl",),
         apt_packages=("cewl",),

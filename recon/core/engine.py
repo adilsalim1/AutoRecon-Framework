@@ -27,11 +27,34 @@ from recon.modules.risk_scoring import apply_risk_scores
 from recon.modules.scan_workflow import order_full_scanning_plugins, order_phase2_plugins
 from recon.modules.scanning import ScanEngine
 from recon.modules.secrets.detector import SecretDetector
+from recon.modules.surface_inventory import (
+    build_surface_inventory,
+    extend_inventory_with_finding_hosts,
+    httpx_target_lines,
+    live_hosts_from_httpx_findings,
+    normalize_host,
+)
+from recon.plugins.base import ScanContext
+from recon.plugins.tool_scanners import HttpxScannerPlugin, httpx_multiline_probe
 from recon.modules.storage import JsonStorageBackend, StorageBackend
 from recon.modules.url_collection import UrlCollectionResult, UrlCollectionService
 from recon.plugins.registry import PluginRegistry, load_builtin_plugins
 
 log = get_logger("engine")
+
+_SCAN_PHASE_ENUM = frozenset({"vhost_ffuf_scanner", "ffuf_scanner"})
+_SCAN_PHASE_TECH = frozenset({"whatweb_scanner", "wappalyzer_scanner", "wafw00f_scanner"})
+_SCAN_PHASE_VULN = frozenset(
+    {"nuclei_scanner", "subjack_scanner", "subzy_scanner", "secretfinder_scanner"}
+)
+_SCAN_PHASE_PORTS = frozenset({"naabu_scanner", "nmap_scanner"})
+_SCAN_PHASED = (
+    _SCAN_PHASE_ENUM
+    | _SCAN_PHASE_TECH
+    | _SCAN_PHASE_VULN
+    | _SCAN_PHASE_PORTS
+    | frozenset({"httpx_scanner"})
+)
 
 
 def _asset_from_single_target(raw: str) -> Asset:
@@ -187,8 +210,6 @@ class PipelineEngine:
             analyzer.summarize_by_priority(analyzed),
         )
 
-        self._notify_discord_post_analysis(result, run_id, dom, analyzed)
-
         pipeline_runtime: dict[str, Any] = {"waf_by_host": {}}
         collection_result: UrlCollectionResult | None = None
         if self.config.collection.enabled:
@@ -275,39 +296,13 @@ class PipelineEngine:
                 "stream_subprocess_output": self.config.stream_subprocess_output,
                 "pipeline_runtime": pipeline_runtime,
                 "waf_skip_aggressive": self.config.scanning.waf_skip_aggressive,
+                "collection_js_urls": (
+                    list(collection_result.js_urls) if collection_result else []
+                ),
+                "secretfinder_max_js_urls": int(
+                    self.config.scanning.secretfinder_max_js_urls
+                ),
             }
-            httpx_plugin = next((p for p in plugins if p.name == "httpx_scanner"), None)
-            other_plugins = order_phase2_plugins(
-                [p for p in plugins if p.name != "httpx_scanner"],
-                api_endpoint_priority=api_pri,
-            )
-            live_only = self.config.scanning.live_hosts_only
-            # "Alive" = httpx reported ≥1 JSON line (web-reachable). Port scanners (naabu/nmap, etc.)
-            # must use this partition when live_hosts_only is true — even if httpx_scanner is omitted
-            # from plugins, we still run httpx once as an implicit probe.
-            httpx_for_probe = httpx_plugin
-            if live_only and len(other_plugins) > 0 and httpx_for_probe is None:
-                try:
-                    httpx_for_probe = self._registry.get("httpx_scanner")
-                except KeyError:
-                    httpx_for_probe = None
-            use_two_phase = (
-                live_only
-                and httpx_for_probe is not None
-                and len(other_plugins) > 0
-            )
-
-            if use_two_phase:
-                if httpx_plugin is None:
-                    log.info(
-                        "scanning: live_hosts_only — implicit httpx probe, then [%s] on httpx-live hosts only",
-                        ", ".join(p.name for p in other_plugins),
-                    )
-                else:
-                    log.info(
-                        "scanning: live_hosts_only — httpx on all assets, then [%s] on live hosts only",
-                        ", ".join(p.name for p in other_plugins),
-                    )
 
             def _scan_engine_kwargs() -> dict[str, Any]:
                 return {
@@ -320,61 +315,22 @@ class PipelineEngine:
                 }
 
             try:
-                if use_two_phase:
-                    kw = _scan_engine_kwargs()
-                    probe_engine = ScanEngine(plugins=[httpx_for_probe], **kw)
-                    use_parallel = (
-                        scan_profile == "full"
-                        and self.config.scanning.parallel_workers > 1
-                    )
-
-                    def _phase1() -> tuple[list[Finding], list[dict[str, Any]], list[Asset]]:
-                        return probe_engine.httpx_probe_partition(
-                            dom,
-                            analyzed,
-                            httpx_for_probe,
-                            parallel=use_parallel,
-                        )
-
-                    f1, r1, live_assets = self._retry("scanning", _phase1)
-                    log.info(
-                        "httpx probe: %s live host(s) of %s asset(s)",
-                        len(live_assets),
-                        len(analyzed),
-                    )
-                    rest_engine = ScanEngine(plugins=other_plugins, **kw)
-
-                    def _phase2() -> tuple[list[Finding], list[dict[str, Any]]]:
-                        if self.config.execution.mode == "async":
-                            return asyncio.run(rest_engine.execute_async(dom, live_assets))
-                        if scan_profile == "full" and self.config.scanning.parallel_workers > 1:
-                            return rest_engine.execute_parallel(dom, live_assets)
-                        return rest_engine.execute_sequential(dom, live_assets)
-
-                    f2, r2 = self._retry("scanning", _phase2)
-                    findings = f1 + f2
-                    scan_records = r1 + r2
-                else:
-                    if live_only and len(other_plugins) > 0 and httpx_for_probe is None:
-                        log.warning(
-                            "live_hosts_only is true but httpx probe is unavailable — "
-                            "running non-httpx scanners on all assets"
-                        )
-                    engine = ScanEngine(plugins=plugins, **_scan_engine_kwargs())
-                    if self.config.execution.mode == "async":
-                        findings, scan_records = asyncio.run(
-                            engine.execute_async(dom, analyzed)
-                        )
-                    elif scan_profile == "full" and self.config.scanning.parallel_workers > 1:
-                        findings, scan_records = self._retry(
-                            "scanning",
-                            lambda: engine.execute_parallel(dom, analyzed),
-                        )
-                    else:
-                        findings, scan_records = self._retry(
-                            "scanning",
-                            lambda: engine.execute_sequential(dom, analyzed),
-                        )
+                log.info(
+                    "scanning: phased pipeline (enum → inventory → tech/WAF → "
+                    "httpx batch → vuln → ports)"
+                )
+                findings, scan_records = self._run_phased_scanning(
+                    result,
+                    run_id,
+                    dom,
+                    analyzed,
+                    plugins,
+                    api_pri,
+                    scan_profile,
+                    collection_result,
+                    pipeline_runtime,
+                    scan_ctx,
+                )
             except Exception as e:
                 result.errors.append(f"scanning: {e}")
                 log.exception("scanning stage failed")
@@ -382,6 +338,7 @@ class PipelineEngine:
         self._apply_waf_asset_tags(analyzed, pipeline_runtime.get("waf_by_host", {}))
         self._storage.save_assets(run_id, analyzed)
 
+        keys_before_enrich = {f.dedupe_key() for f in findings}
         findings = self._post_scan_enrichment(
             findings, analyzed, dom, collection_result
         )
@@ -390,8 +347,251 @@ class PipelineEngine:
         for rec in scan_records:
             self._storage.append_scan_record(run_id, rec)
 
-        self._finalize_notifications(result, findings, run_id, dom)
+        if use_discord_multi_channel(self.config):
+            try:
+                dn = DiscordMultiChannelNotifier.from_config(self.config)
+                for f in findings:
+                    if f.dedupe_key() not in keys_before_enrich:
+                        dn.ingest_scan_finding(f, run_id, dom)
+                dn.flush_all_buffers()
+            except Exception as e:
+                result.errors.append(f"discord_post_enrich: {e}")
+                log.exception("discord post-enrichment notifications failed")
+        self._finalize_notifications(
+            result,
+            findings,
+            run_id,
+            dom,
+            skip_findings_ingest=use_discord_multi_channel(self.config),
+        )
         return result
+
+    def _execute_scan_phase(
+        self,
+        engine: ScanEngine,
+        dom: str,
+        assets: list[Asset],
+        scan_profile: str,
+    ) -> tuple[list[Finding], list[dict[str, Any]]]:
+        if self.config.execution.mode == "async":
+            return asyncio.run(engine.execute_async(dom, assets))
+        if scan_profile == "full" and self.config.scanning.parallel_workers > 1:
+            return engine.execute_parallel(dom, assets)
+        return engine.execute_sequential(dom, assets)
+
+    def _discord_ingest_findings(
+        self, batch: list[Finding], run_id: str, dom: str, result: PipelineResult
+    ) -> None:
+        if not batch or not use_discord_multi_channel(self.config):
+            return
+        try:
+            dn = DiscordMultiChannelNotifier.from_config(self.config)
+            dn.process_scan_findings(batch, run_id, dom)
+            dn.flush_all_buffers()
+        except Exception as e:
+            result.errors.append(f"discord_phase: {e}")
+            log.exception("discord phased notification failed")
+
+    def _notify_surface_inventory_phase(
+        self,
+        result: PipelineResult,
+        run_id: str,
+        dom: str,
+        inventory: dict[str, Any],
+        analyzed: list[Asset],
+    ) -> None:
+        if not use_discord_multi_channel(self.config):
+            return
+        try:
+            dn = DiscordMultiChannelNotifier.from_config(self.config)
+            dn.send_surface_inventory(inventory, run_id, dom)
+            for a in analyzed:
+                if is_critical_host_asset(a):
+                    dn.send_critical_subdomain(a, run_id, dom)
+            staging = [a for a in analyzed if is_staging_triage_asset(a)]
+            if staging:
+                dn.send_staging_batch(staging, run_id, dom)
+        except Exception as e:
+            result.errors.append(f"discord_inventory: {e}")
+            log.exception("discord surface inventory failed")
+
+    def _assets_for_live_hosts(
+        self, dom: str, hosts: set[str], analyzed: list[Asset]
+    ) -> list[Asset]:
+        by = {normalize_host(a.identifier): a for a in analyzed}
+        out: list[Asset] = []
+        seen: set[str] = set()
+        for h in sorted(hosts):
+            n = normalize_host(h)
+            if not n or n in seen:
+                continue
+            seen.add(n)
+            a = by.get(n)
+            if a is not None:
+                out.append(a)
+            else:
+                out.append(
+                    Asset(
+                        identifier=n,
+                        asset_type=AssetType.SUBDOMAIN,
+                        parent_domain=dom,
+                        metadata={"source": "live_http"},
+                    )
+                )
+        return out
+
+    def _run_phased_scanning(
+        self,
+        result: PipelineResult,
+        run_id: str,
+        dom: str,
+        analyzed: list[Asset],
+        plugins: list[Any],
+        api_pri: bool,
+        scan_profile: str,
+        collection_result: UrlCollectionResult | None,
+        pipeline_runtime: dict[str, Any],
+        scan_ctx: dict[str, Any],
+    ) -> tuple[list[Finding], list[dict[str, Any]]]:
+        findings: list[Finding] = []
+        scan_records: list[dict[str, Any]] = []
+
+        def _kw() -> dict[str, Any]:
+            return {
+                "parallel_workers": self.config.scanning.parallel_workers,
+                "rate_limit_per_second": self.config.scanning.rate_limit_per_second,
+                "skip_duplicates": self.config.scanning.skip_duplicate_targets,
+                "has_fingerprint": self._storage.has_scan_fingerprint,
+                "record_fingerprint": self._storage.record_scan_fingerprint,
+                "extra_context": scan_ctx,
+            }
+
+        kw = _kw()
+        enum_plugins = [p for p in plugins if p.name in _SCAN_PHASE_ENUM]
+        if enum_plugins:
+            eng = ScanEngine(plugins=enum_plugins, **kw)
+
+            def _enum() -> tuple[list[Finding], list[dict[str, Any]]]:
+                return self._execute_scan_phase(eng, dom, analyzed, scan_profile)
+
+            ef, er = self._retry("scanning_enumeration", _enum)
+            findings.extend(ef)
+            scan_records.extend(er)
+
+        inventory = build_surface_inventory(dom, analyzed, collection_result)
+        extend_inventory_with_finding_hosts(inventory, findings)
+        pipeline_runtime["surface_inventory"] = {
+            "domains_count": inventory.get("domains_count"),
+            "urls_count": inventory.get("urls_count"),
+            "endpoints_count": inventory.get("endpoints_count"),
+        }
+        if isinstance(self._storage, JsonStorageBackend):
+            self._storage.save_json_artifact(
+                run_id,
+                "surface_inventory",
+                {
+                    "apex": inventory.get("apex"),
+                    "domains": inventory.get("domains"),
+                    "domains_count": inventory.get("domains_count"),
+                    "urls_count": inventory.get("urls_count"),
+                    "endpoint_paths": inventory.get("endpoint_paths"),
+                    "endpoints_count": inventory.get("endpoints_count"),
+                    "urls_sample": (inventory.get("urls") or [])[:500],
+                },
+            )
+        self._notify_surface_inventory_phase(result, run_id, dom, inventory, analyzed)
+
+        tech_plugins = order_phase2_plugins(
+            [p for p in plugins if p.name in _SCAN_PHASE_TECH],
+            api_endpoint_priority=False,
+        )
+        if tech_plugins:
+            eng = ScanEngine(plugins=tech_plugins, **kw)
+
+            def _tech() -> tuple[list[Finding], list[dict[str, Any]]]:
+                return self._execute_scan_phase(eng, dom, analyzed, scan_profile)
+
+            tf, tr = self._retry("scanning_tech", _tech)
+            findings.extend(tf)
+            scan_records.extend(tr)
+            self._discord_ingest_findings(tf, run_id, dom, result)
+
+        httpx_plugin = next((p for p in plugins if p.name == "httpx_scanner"), None)
+        if httpx_plugin is None and self.config.scanning.live_hosts_only:
+            try:
+                httpx_plugin = self._registry.get("httpx_scanner")
+            except KeyError:
+                httpx_plugin = None
+        hf: list[Finding] = []
+        if httpx_plugin:
+            max_u = int(self.config.scanning.max_httpx_targets or 0)
+            lines = httpx_target_lines(inventory, max_urls=max_u)
+            probe_ctx = ScanContext(
+                domain=dom,
+                rate_limit_per_second=self.config.scanning.rate_limit_per_second,
+                metadata=dict(scan_ctx),
+            )
+            raw = httpx_multiline_probe(lines, probe_ctx)
+            hf = HttpxScannerPlugin().parse(raw)
+            findings.extend(hf)
+            scan_records.append(
+                {
+                    "scanner": "httpx_scanner",
+                    "mode": "batch",
+                    "result_lines": len(hf),
+                }
+            )
+            self._discord_ingest_findings(hf, run_id, dom, result)
+
+        live_hosts = live_hosts_from_httpx_findings(hf) if hf else set()
+        if httpx_plugin and live_hosts:
+            nuclei_assets = self._assets_for_live_hosts(dom, live_hosts, analyzed)
+        else:
+            nuclei_assets = list(analyzed)
+        port_assets = (
+            nuclei_assets if self.config.scanning.live_hosts_only else analyzed
+        )
+
+        vuln_plugins = order_phase2_plugins(
+            [p for p in plugins if p.name in _SCAN_PHASE_VULN],
+            api_endpoint_priority=api_pri,
+        )
+        if vuln_plugins:
+            eng = ScanEngine(plugins=vuln_plugins, **kw)
+
+            def _vuln() -> tuple[list[Finding], list[dict[str, Any]]]:
+                return self._execute_scan_phase(eng, dom, nuclei_assets, scan_profile)
+
+            vf, vr = self._retry("scanning_vuln", _vuln)
+            findings.extend(vf)
+            scan_records.extend(vr)
+            self._discord_ingest_findings(vf, run_id, dom, result)
+
+        port_plugins = [p for p in plugins if p.name in _SCAN_PHASE_PORTS]
+        if port_plugins:
+            eng = ScanEngine(plugins=port_plugins, **kw)
+
+            def _ports() -> tuple[list[Finding], list[dict[str, Any]]]:
+                return self._execute_scan_phase(eng, dom, port_assets, scan_profile)
+
+            pf, pr = self._retry("scanning_ports", _ports)
+            findings.extend(pf)
+            scan_records.extend(pr)
+            self._discord_ingest_findings(pf, run_id, dom, result)
+
+        leftover = [p for p in plugins if p.name not in _SCAN_PHASED]
+        if leftover:
+            eng = ScanEngine(plugins=leftover, **kw)
+
+            def _left() -> tuple[list[Finding], list[dict[str, Any]]]:
+                return self._execute_scan_phase(eng, dom, analyzed, scan_profile)
+
+            lf, lr = self._retry("scanning_other", _left)
+            findings.extend(lf)
+            scan_records.extend(lr)
+            self._discord_ingest_findings(lf, run_id, dom, result)
+
+        return findings, scan_records
 
     @staticmethod
     def _apply_waf_asset_tags(assets: list[Asset], waf_by_host: Any) -> None:
@@ -434,33 +634,31 @@ class PipelineEngine:
                     parent_domain=dom,
                 )
             )
+        if collection_result and self.config.scanning.js_snitch_enabled:
+            try:
+                from recon.modules.js_snitch_runner import run_js_snitch_on_urls
+
+                out.extend(
+                    run_js_snitch_on_urls(
+                        collection_result.js_urls,
+                        tool_paths=dict(self.config.tool_paths),
+                        timeout_seconds=self.config.scanning.js_snitch_fetch_timeout_seconds,
+                        max_urls=self.config.scanning.js_snitch_max_urls,
+                        js_snitch_repo=str(
+                            self.config.scanning.js_snitch_repo or ""
+                        ).strip(),
+                        subprocess_timeout_trufflehog=self.config.scanning.js_snitch_trufflehog_timeout_seconds,
+                        subprocess_timeout_semgrep=self.config.scanning.js_snitch_semgrep_timeout_seconds,
+                        stream_subprocess_output=self.config.stream_subprocess_output,
+                    )
+                )
+            except Exception as e:
+                log.warning("js_snitch: enrichment failed: %s", e)
         if self.config.scanning.correlation_enabled:
             out = correlate_findings(out, analyzed)
         if self.config.scanning.risk_scoring_enabled:
             out = apply_risk_scores(out, analyzed)
         return out
-
-    def _notify_discord_post_analysis(
-        self,
-        result: PipelineResult,
-        run_id: str,
-        dom: str,
-        analyzed: list[Asset],
-    ) -> None:
-        if not use_discord_multi_channel(self.config):
-            return
-        try:
-            dn = DiscordMultiChannelNotifier.from_config(self.config)
-            dn.send_asset_discovery(analyzed, run_id, dom)
-            for a in analyzed:
-                if is_critical_host_asset(a):
-                    dn.send_critical_subdomain(a, run_id, dom)
-            staging = [a for a in analyzed if is_staging_triage_asset(a)]
-            if staging:
-                dn.send_staging_batch(staging, run_id, dom)
-        except Exception as e:
-            result.errors.append(f"discord_post_analysis: {e}")
-            log.exception("discord post-analysis notifications failed")
 
     def _finalize_notifications(
         self,
@@ -468,11 +666,14 @@ class PipelineEngine:
         findings: list[Finding],
         run_id: str,
         dom: str,
+        *,
+        skip_findings_ingest: bool = False,
     ) -> None:
         try:
             if use_discord_multi_channel(self.config):
                 dn = DiscordMultiChannelNotifier.from_config(self.config)
-                dn.process_scan_findings(findings, run_id, dom)
+                if not skip_findings_ingest:
+                    dn.process_scan_findings(findings, run_id, dom)
                 dn.flush_all_buffers()
                 dn.send_summary(
                     {

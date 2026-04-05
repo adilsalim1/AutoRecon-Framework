@@ -134,6 +134,8 @@ class ScanningConfig:
     timeout_seconds: int = 300
     ffuf_wordlist: str = DEFAULT_FFUF_WORDLIST
     secretfinder_script: str = ""
+    secretfinder_max_js_urls: int = 40
+    """Per host: run SecretFinder with `-i` on up to N collected `*.js` URLs (same host/subdomain). 0 = only `https://host` (legacy)."""
     wafw00f_aggressive: bool = True
     live_hosts_only: bool = False
     """When True and httpx_scanner is enabled, run httpx on all assets first; other scanners only see hosts with httpx JSON output (or httpx skipped as duplicate)."""
@@ -162,6 +164,17 @@ class ScanningConfig:
     max_js_analyze: int = 40
     url_secret_scan_max: int = 500
     """Regex secret scan across collected URL strings (lightweight)."""
+    max_httpx_targets: int = 4000
+    """Max collected URLs to include in batched httpx (after per-host https:// roots). 0 = no limit."""
+    js_snitch_enabled: bool = True
+    """Download collected JS URLs and run TruffleHog + Semgrep (js-snitch-style); needs binaries on PATH."""
+    js_snitch_max_urls: int = 500
+    """Cap how many JS URLs to download for TruffleHog/Semgrep (memory/time)."""
+    js_snitch_repo: str = ""
+    """Optional path to cloned vavkamil/js-snitch for custom-semgrep-templates."""
+    js_snitch_fetch_timeout_seconds: int = 30
+    js_snitch_trufflehog_timeout_seconds: int = 900
+    js_snitch_semgrep_timeout_seconds: int = 600
 
 
 @dataclass
@@ -297,7 +310,7 @@ class AppConfig:
                     str(s.get("ffuf_wordlist", "") or "").strip() or DEFAULT_FFUF_WORDLIST
                 ),
                 secretfinder_script=str(s.get("secretfinder_script", "") or ""),
-                wafw00f_aggressive=bool(s.get("wafw00f_aggressive", True)),
+                secretfinder_max_js_urls=int(s.get("secretfinder_max_js_urls", 40)),
                 live_hosts_only=bool(s.get("live_hosts_only", False)),
                 vhost_ffuf_wordlist=str(s.get("vhost_ffuf_wordlist", "") or ""),
                 vhost_ffuf_filter_size=_parse_optional_positive_int(
@@ -315,6 +328,19 @@ class AppConfig:
                 api_endpoint_priority=bool(s.get("api_endpoint_priority", True)),
                 max_js_analyze=int(s.get("max_js_analyze", 40)),
                 url_secret_scan_max=int(s.get("url_secret_scan_max", 500)),
+                max_httpx_targets=int(s.get("max_httpx_targets", 4000)),
+                js_snitch_enabled=bool(s.get("js_snitch_enabled", True)),
+                js_snitch_max_urls=int(s.get("js_snitch_max_urls", 500)),
+                js_snitch_repo=str(s.get("js_snitch_repo", "") or ""),
+                js_snitch_fetch_timeout_seconds=int(
+                    s.get("js_snitch_fetch_timeout_seconds", 30)
+                ),
+                js_snitch_trufflehog_timeout_seconds=int(
+                    s.get("js_snitch_trufflehog_timeout_seconds", 900)
+                ),
+                js_snitch_semgrep_timeout_seconds=int(
+                    s.get("js_snitch_semgrep_timeout_seconds", 600)
+                ),
             ),
             alerts=AlertsConfig(
                 webhook_url=a.get("webhook_url", "") or "",

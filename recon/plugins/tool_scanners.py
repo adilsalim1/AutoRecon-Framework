@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import ipaddress
 import json
 import re
@@ -10,10 +12,45 @@ from pathlib import Path
 from recon.core.logger import get_logger
 from recon.models.assets import Asset
 from recon.models.findings import Finding, Severity
+from recon.modules.surface_inventory import host_from_url, normalize_host
 from recon.plugins.base import RawScanResult, ScanContext, ScannerPlugin
 from recon.utils.tool_runner import resolve_binary, resolve_httpx_binary, run_tool
 
 log = get_logger("tool_scanners")
+
+
+def _ffuf_json_is_result(row: dict) -> bool:
+    """ffuf v1 used type=result; v2 streams Result objects without a type field."""
+    if row.get("type") == "result":
+        return True
+    return bool(
+        isinstance(row.get("input"), dict)
+        and "url" in row
+        and ("status" in row or "StatusCode" in row)
+    )
+
+
+def _ffuf_fuzz_from_row(row: dict) -> str:
+    """Resolve FUZZ payload; ffuf JSON encodes wordlist values as base64."""
+    inp = row.get("input") or {}
+    if not isinstance(inp, dict):
+        return ""
+    val = inp.get("FUZZ")
+    if val is None:
+        for k, v in inp.items():
+            if str(k).upper() == "FFUFHASH":
+                continue
+            val = v
+            break
+    if val is None:
+        return ""
+    sval = val if isinstance(val, str) else str(val)
+    pad = (-len(sval)) % 4
+    try:
+        raw = base64.b64decode(sval + ("=" * pad), validate=False)
+        return raw.decode("utf-8", errors="replace")
+    except (ValueError, binascii.Error, UnicodeDecodeError):
+        return sval
 
 
 def _timeout(ctx: ScanContext, default: int = 300) -> int:
@@ -50,6 +87,43 @@ def _map_nuclei_severity(s: str) -> Severity:
     }.get(s, Severity.MEDIUM)
 
 
+def httpx_multiline_probe(target_lines: list[str], context: ScanContext) -> RawScanResult:
+    """Single or chunked stdin batch for ProjectDiscovery httpx (-json per line)."""
+    lines = [x.strip() for x in target_lines if x.strip()]
+    if not lines:
+        return RawScanResult(
+            scanner_name="httpx_scanner",
+            success=True,
+            raw_payload={"lines": []},
+        )
+    bin_path = resolve_httpx_binary(context.metadata.get("tool_paths") or {})
+    argv = [bin_path, "-silent", "-json", "-timeout", "10"]
+    tout = max(120, _timeout(ctx=context, default=300))
+    out_lines: list[str] = []
+    err_acc = ""
+    chunk = max(50, min(500, int(context.metadata.get("httpx_batch_chunk", 400))))
+    for i in range(0, len(lines), chunk):
+        batch = lines[i : i + chunk]
+        stdin_text = "\n".join(batch) + "\n"
+        proc = _run_tool_ctx(
+            context,
+            argv,
+            timeout=min(tout, 900),
+            tool_label="httpx",
+            stdin_text=stdin_text,
+        )
+        err_acc = proc.stderr or err_acc
+        if proc.stdout and proc.stdout.strip():
+            out_lines.extend(proc.stdout.strip().splitlines())
+    return RawScanResult(
+        scanner_name="httpx_scanner",
+        targets=[],
+        success=bool(out_lines) or not err_acc,
+        error_message=(err_acc or None) if not out_lines else None,
+        raw_payload={"lines": out_lines},
+    )
+
+
 class HttpxScannerPlugin(ScannerPlugin):
     """Probe live HTTP(S) services; emits informational findings with tech/title."""
 
@@ -66,19 +140,32 @@ class HttpxScannerPlugin(ScannerPlugin):
         last_rc = 0
         # ProjectDiscovery httpx: one URL per line on stdin (pipe-friendly; see PD httpx README).
         argv = [bin_path, "-silent", "-json", "-timeout", "10"]
-        for scheme in ("https", "http"):
+        if "://" in host:
             proc = _run_tool_ctx(
                 context,
                 argv,
                 timeout=_timeout(ctx=context, default=120),
                 tool_label="httpx",
-                stdin_text=f"{scheme}://{host}\n",
+                stdin_text=host + "\n",
             )
             last_rc = proc.returncode
             err = proc.stderr or err
             if proc.stdout.strip():
                 lines.extend(proc.stdout.strip().splitlines())
-                break
+        else:
+            for scheme in ("https", "http"):
+                proc = _run_tool_ctx(
+                    context,
+                    argv,
+                    timeout=_timeout(ctx=context, default=120),
+                    tool_label="httpx",
+                    stdin_text=f"{scheme}://{host}\n",
+                )
+                last_rc = proc.returncode
+                err = proc.stderr or err
+                if proc.stdout.strip():
+                    lines.extend(proc.stdout.strip().splitlines())
+                    break
         if not lines and last_rc != 0:
             hint = ""
             low = (err or "").lower()
@@ -260,7 +347,7 @@ class SubzyScannerPlugin(ScannerPlugin):
         try:
             proc = _run_tool_ctx(
                 context,
-                [bin_path, "--targets", path],
+                [bin_path, "run", "--targets", path, "--https"],
                 timeout=_timeout(ctx=context, default=300),
                 tool_label="subzy",
             )
@@ -698,11 +785,13 @@ class FfufScannerPlugin(ScannerPlugin):
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if row.get("type") != "result":
+            if not isinstance(row, dict) or not _ffuf_json_is_result(row):
                 continue
-            inp = (row.get("input") or {}).get("FUZZ", "")
+            inp = _ffuf_fuzz_from_row(row).strip()
+            if not inp or inp.startswith("#"):
+                continue
             url = row.get("url", "")
-            sc = row.get("status")
+            sc = row.get("status") if "status" in row else row.get("StatusCode")
             if sc in (200, 301, 302, 401, 403) and inp:
                 out.append(
                     Finding(
@@ -896,18 +985,10 @@ class VhostFfufScannerPlugin(ScannerPlugin):
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if row.get("type") != "result":
+            if not isinstance(row, dict) or not _ffuf_json_is_result(row):
                 continue
-            fuzz_input = row.get("input") or {}
-            host_hdr = ""
-            if isinstance(fuzz_input, dict):
-                host_hdr = fuzz_input.get("FUZZ") or fuzz_input.get("Host") or ""
-                if not host_hdr and len(fuzz_input) == 1:
-                    v = next(iter(fuzz_input.values()))
-                    host_hdr = v if isinstance(v, str) else str(v)
-            elif isinstance(fuzz_input, str):
-                host_hdr = fuzz_input
-            sc = row.get("status")
+            host_hdr = _ffuf_fuzz_from_row(row).strip()
+            sc = row.get("status") if "status" in row else row.get("StatusCode")
             url = row.get("url", "")
             if host_hdr:
                 out.append(
@@ -931,8 +1012,38 @@ class VhostFfufScannerPlugin(ScannerPlugin):
         return out
 
 
+def _secretfinder_js_inputs_for_host(
+    asset_host: str,
+    collected_js: list,
+    max_urls: int,
+) -> list[str]:
+    """
+    Prefer harvested JS URLs whose hostname equals the asset or is a subdomain of it
+    (e.g. asset example.com → include https://api.example.com/app.js).
+    """
+    ah = normalize_host(asset_host)
+    if not ah or not collected_js:
+        return []
+    matched: list[str] = []
+    seen: set[str] = set()
+    for raw in collected_js:
+        u = str(raw).strip()
+        if not u.startswith("http"):
+            continue
+        uh = host_from_url(u)
+        if not uh:
+            continue
+        if uh == ah or uh.endswith("." + ah):
+            if u not in seen:
+                seen.add(u)
+                matched.append(u)
+    if max_urls > 0:
+        return matched[:max_urls]
+    return matched
+
+
 class SecretFinderScannerPlugin(ScannerPlugin):
-    """Runs SecretFinder against one origin — set scanning.secretfinder_script (Python script path)."""
+    """Runs SecretFinder; prefers collected JS URLs per host, else `https://host`."""
 
     name = "secretfinder_scanner"
     version = "1.0.0"
@@ -956,23 +1067,66 @@ class SecretFinderScannerPlugin(ScannerPlugin):
         if not targets:
             return RawScanResult(scanner_name=self.name, success=True, raw_payload={"stdout": ""})
         host = targets[0].identifier.strip()
-        url = f"https://{host}"
-        proc = _run_tool_ctx(
-            context,
-            [py, script, "-i", url, "-o", "cli"],
-            timeout=_timeout(ctx=context, default=300),
-            tool_label="secretfinder",
-        )
+        collected = context.metadata.get("collection_js_urls") or []
+        if not isinstance(collected, list):
+            collected = []
+        max_js = int(context.metadata.get("secretfinder_max_js_urls", 40) or 0)
+        inputs: list[str] = []
+        if max_js != 0:
+            inputs = _secretfinder_js_inputs_for_host(host, collected, max_js)
+        if not inputs:
+            inputs = [f"https://{host.split('/')[0]}"]
+
+        runs: list[dict[str, str]] = []
+        tout = _timeout(ctx=context, default=300)
+        for inp in inputs:
+            proc = _run_tool_ctx(
+                context,
+                [py, script, "-i", inp, "-o", "cli"],
+                timeout=tout,
+                tool_label="secretfinder",
+            )
+            runs.append(
+                {
+                    "input": inp,
+                    "stdout": proc.stdout or "",
+                    "stderr": proc.stderr or "",
+                }
+            )
         return RawScanResult(
             scanner_name=self.name,
             targets=[host],
             success=True,
-            raw_payload={"stdout": proc.stdout, "stderr": proc.stderr},
+            raw_payload={"runs": runs},
         )
 
     def parse(self, raw: RawScanResult) -> list[Finding]:
-        text = raw.raw_payload.get("stdout", "")
+        runs = raw.raw_payload.get("runs")
         out: list[Finding] = []
+        if isinstance(runs, list) and runs:
+            for run in runs:
+                if not isinstance(run, dict):
+                    continue
+                text = (run.get("stdout") or "").strip()
+                if not text:
+                    continue
+                inp = str(run.get("input") or "")
+                out.append(
+                    Finding(
+                        target=inp or (raw.targets[0] if raw.targets else ""),
+                        vulnerability_type="secret_candidate",
+                        severity=Severity.MEDIUM,
+                        evidence={
+                            "output": text[:8000],
+                            "secretfinder_input": inp,
+                        },
+                        source_scanner=self.name,
+                        title="SecretFinder output (manual review)",
+                        source_ref=inp,
+                    )
+                )
+            return out
+        text = raw.raw_payload.get("stdout", "")
         if not text.strip():
             return out
         for t in raw.targets:

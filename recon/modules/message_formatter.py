@@ -121,6 +121,45 @@ def _consume_lines_up_to_budget(lines: list[str], budget: int) -> tuple[str, lis
     return "\n".join(buf), lines[i:]
 
 
+def format_surface_inventory_payload(
+    inventory: dict[str, Any],
+    run_id: str,
+    domain: str,
+) -> dict[str, Any]:
+    """Discord webhook: deduplicated domains, URL counts, samples (hosts from URLs included)."""
+    doms = inventory.get("domains") or []
+    urls = inventory.get("urls") or []
+    sample_hosts = "\n".join(f"- `{h}`" for h in doms[:35])
+    if len(doms) > 35:
+        sample_hosts += f"\n_…+{len(doms) - 35} hosts_"
+    sample_urls = "\n".join(f"- `{u[:180]}`" for u in urls[:12])
+    if len(urls) > 12:
+        sample_urls += f"\n_…+{len(urls) - 12} URLs_"
+    paths = inventory.get("endpoint_paths") or []
+    sample_paths = "\n".join(f"- `{p[:120]}`" for p in paths[:20])
+    if len(paths) > 20:
+        sample_paths += f"\n_…+{len(paths) - 20} paths_"
+    desc = (
+        f"**Scope:** `{domain}` · **Run:** `{run_id}`\n\n"
+        f"**Unique hosts:** `{inventory.get('domains_count', 0)}` "
+        f"(discovery + URL netloc + enum)\n"
+        f"**URLs:** `{inventory.get('urls_count', 0)}` · "
+        f"**Paths:** `{inventory.get('endpoints_count', 0)}`\n\n"
+        f"**Hosts (sample):**\n{sample_hosts or '—'}\n\n"
+        f"**URLs (sample):**\n{sample_urls or '—'}\n\n"
+        f"**Paths (sample):**\n{sample_paths or '—'}"
+    )[:_MAX_DESC]
+    embed = {
+        "title": "Surface inventory (deduplicated)",
+        "description": desc,
+        "color": 0x3498DB,
+    }
+    return format_webhook_with_embeds(
+        f"[ASSETS] Inventory · `{domain}` · `{run_id}`",
+        [embed],
+    )
+
+
 def format_asset_discovery_payloads(
     assets: list[Asset],
     run_id: str,
