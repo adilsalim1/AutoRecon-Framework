@@ -70,11 +70,14 @@ def collect_katana(seed_url: str, tool_paths: dict[str, str], timeout: int, stre
 
 
 def collect_hakrawler(seed_url: str, tool_paths: dict[str, str], timeout: int, stream: bool) -> list[str]:
+    """hakrawler reads one seed URL on stdin; see `hakrawler -h` (-d depth, not -url)."""
     bin_path = resolve_binary(tool_paths, "hakrawler", "hakrawler")
     try:
+        per_url = max(5, min(120, timeout // 2 or 60))
         proc = run_tool(
-            [bin_path, "-url", seed_url, "-depth", "2"],
+            [bin_path, "-d", "2", "-timeout", str(per_url)],
             timeout=timeout,
+            stdin_text=(seed_url or "").strip() + "\n",
             live_output=stream,
             live_prefix="hakrawler",
         )

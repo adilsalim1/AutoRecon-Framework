@@ -110,4 +110,7 @@ def finding_immediate_delivery(finding: Finding) -> bool:
         return True
     if vt == "waf_detected":
         return True
+    # Tech / fingerprint channel: post now (was batched; easy to miss if webhook or flush misconfigured)
+    if route_finding_channel(finding) == CH_TECH:
+        return True
     return False

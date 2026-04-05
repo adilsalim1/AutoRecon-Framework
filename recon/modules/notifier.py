@@ -290,6 +290,7 @@ class DiscordMultiChannelNotifier:
     _embed_buffers: dict[str, list[dict[str, Any]]] = field(
         default_factory=lambda: defaultdict(list), repr=False
     )
+    _webhook_warned: set[str] = field(default_factory=set, repr=False)
 
     @classmethod
     def from_config(cls, config: AppConfig) -> DiscordMultiChannelNotifier:
@@ -307,14 +308,23 @@ class DiscordMultiChannelNotifier:
     def _url(self, channel: str) -> str | None:
         u = self.webhooks.url_for(channel)
         if not u:
-            log.warning("Discord webhook missing for channel %r; skip send", channel)
+            if channel not in self._webhook_warned:
+                self._webhook_warned.add(channel)
+                log.warning(
+                    "Discord webhook missing for channel %r — set DISCORD_WEBHOOK_%s in `.env`",
+                    channel,
+                    channel.upper(),
+                )
             return None
         ul = u.lower()
         if not (
             ul.startswith("https://discord.com/api/webhooks/")
             or ul.startswith("https://discordapp.com/api/webhooks/")
         ):
-            log.warning("Channel %r URL is not a Discord webhook; skip", channel)
+            k = f"{channel}:badurl"
+            if k not in self._webhook_warned:
+                self._webhook_warned.add(k)
+                log.warning("Channel %r URL is not a Discord webhook; skip", channel)
             return None
         return u
 
@@ -328,10 +338,7 @@ class DiscordMultiChannelNotifier:
         return False
 
     def _eligible_finding(self, f: Finding, channel: str) -> bool:
-        if self.min_risk_score is not None:
-            if f.vulnerability_type != "waf_detected":
-                if float(f.risk_score or 0.0) < self.min_risk_score:
-                    return False
+        """min_risk_score / min_severity apply to vuln-style alerts, not inventory channels."""
         if channel in (CH_SECRETS, CH_CRITICAL):
             return True
         if self.alert_waf_detection and f.vulnerability_type == "waf_detected":
@@ -340,6 +347,10 @@ class DiscordMultiChannelNotifier:
             return True
         if channel in (CH_TECH, CH_PORTS):
             return True
+        if self.min_risk_score is not None:
+            if f.vulnerability_type != "waf_detected":
+                if float(f.risk_score or 0.0) < self.min_risk_score:
+                    return False
         return _SEVERITY_ORDER.get(f.severity, 0) >= _SEVERITY_ORDER.get(
             self.min_severity, 0
         )

@@ -35,6 +35,7 @@ tools:
 discovery:
   enabled: true
   expand_subdomains: true
+  # single_target_mode: true   # or CLI --single-domain: no subfinder/crt.sh; scan only `domain`
   timeout_seconds: 300
   # Passive amass often needs >5m; default 1800. Increase if logs show exit 124 (subprocess timeout).
   # amass_timeout_seconds: 1800

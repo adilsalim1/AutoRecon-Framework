@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -31,6 +32,32 @@ from recon.modules.url_collection import UrlCollectionResult, UrlCollectionServi
 from recon.plugins.registry import PluginRegistry, load_builtin_plugins
 
 log = get_logger("engine")
+
+
+def _asset_from_single_target(raw: str) -> Asset:
+    """One synthetic asset for `discovery.single_target_mode` (hostname, subdomain label, or IP)."""
+    s = raw.strip()
+    if not s:
+        raise ValueError("single-target domain is empty")
+    try:
+        ipaddress.ip_address(s)
+        return Asset(
+            identifier=s,
+            asset_type=AssetType.IP,
+            parent_domain=s,
+            metadata={"source": "single_target"},
+        )
+    except ValueError:
+        pass
+    h = s.lower().rstrip(".")
+    parts = [p for p in h.split(".") if p]
+    at = AssetType.DOMAIN if len(parts) == 2 else AssetType.SUBDOMAIN
+    return Asset(
+        identifier=h,
+        asset_type=at,
+        parent_domain=h,
+        metadata={"source": "single_target"},
+    )
 
 
 def _apex_assets_for_vhost_scan(domain: str, analyzed: list[Asset]) -> list[Asset]:
@@ -113,11 +140,15 @@ class PipelineEngine:
         # 1) Discovery
         try:
             log.info(
-                "discovery start domain=%s providers=%s",
+                "discovery start domain=%s providers=%s single_target=%s",
                 dom,
                 self.config.discovery.providers,
+                self.config.discovery.single_target_mode,
             )
-            if not self.config.discovery.enabled:
+            if self.config.discovery.single_target_mode:
+                assets = [_asset_from_single_target(dom)]
+                log.info("single-target mode: skipped passive discovery (%s asset(s))", len(assets))
+            elif not self.config.discovery.enabled:
                 assets = [
                     Asset(
                         identifier=dom,

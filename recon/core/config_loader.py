@@ -105,6 +105,8 @@ class DiscoveryConfig:
     """Passive `amass enum` often exceeds 5–10 minutes; 1800s (30m) avoids exit 124 on large scopes."""
     wordlist: str = ""
     resolvers: str = ""
+    single_target_mode: bool = False
+    """When True, skip all discovery providers and scan only the hostname or IP in `domain`."""
 
 
 @dataclass
@@ -274,6 +276,7 @@ class AppConfig:
                 ),
                 wordlist=str(d.get("wordlist", "") or ""),
                 resolvers=str(d.get("resolvers", "") or ""),
+                single_target_mode=bool(d.get("single_target_mode", False)),
             ),
             collection=CollectionConfig(
                 enabled=bool(col.get("enabled", True)),
@@ -385,6 +388,9 @@ def _env_overrides() -> dict[str, Any]:
                 cur[leaf] = val
         else:
             cur[leaf] = val
+    std = os.environ.get("RECON_SINGLE_DOMAIN", "").strip().lower()
+    if std in ("1", "true", "yes", "on"):
+        patch.setdefault("discovery", {})["single_target_mode"] = True
     return patch
 
 

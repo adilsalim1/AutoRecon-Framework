@@ -94,7 +94,8 @@ All flags are defined in `recon/main.py`.
 
 | Option | Description |
 |--------|-------------|
-| `-d`, `--domain` | Target domain (overrides config `domain`) |
+| `-d`, `--domain` | Target domain or hostname (overrides config `domain`) |
+| `--single-domain` | Skip passive discovery; scan only the host/IP given by `-d` / config `domain` (same as `discovery.single_target_mode: true`) |
 | `-c`, `--config` | Optional YAML/JSON overrides (defaults are already real discovery + scanners) |
 | `--scan` | One of `full`, `quick`, `none`: `full` uses parallel scanning when workers > 1; `quick` forces one worker and sequential mode; `none` skips scanning |
 | `--execution` | `sequential` or `async`; overrides `execution.mode` in config |
@@ -135,7 +136,7 @@ Top-level and nested keys match the dataclasses in `recon/core/config_loader.py`
 | `domain` | Default target when `--domain` is omitted |
 | `bootstrap` | `auto_install`: if `true`, missing CLIs required by enabled plugins/providers are installed after a preflight check |
 | `tools` | Map logical names to binaries (absolute path or name on `PATH`) |
-| `discovery` | `enabled`, `expand_subdomains`, `providers`, `timeout_seconds`, `wordlist`, `resolvers` |
+| `discovery` | `enabled`, `expand_subdomains`, **`single_target_mode`** (scan only `domain`), `providers`, `timeout_seconds`, `amass_timeout_seconds`, `wordlist`, `resolvers` |
 | `scanning` | `enabled`, `plugins`, `parallel_workers`, `rate_limit_per_second`, `timeout_seconds`, `skip_duplicate_targets`, **`live_hosts_only`** (default `true`), `ffuf_wordlist`, **`vhost_ffuf_*`**, **`naabu_top_ports`**, **`nmap_top_ports`**, **`nmap_scripts`**, **`nmap_scan_timeout_seconds`**, `secretfinder_script`, `wafw00f_aggressive` |
 | `alerts` | `webhook_url`, `min_severity`, `batch_summaries`, `deduplicate` |
 | `execution` | `mode` (`sequential` \| `async`), `max_retries`, `retry_backoff_seconds` |
@@ -157,6 +158,7 @@ Top-level and nested keys match the dataclasses in `recon/core/config_loader.py`
 | `RECON_SCAN_WORKERS` | `scanning.parallel_workers` |
 | `RECON_EXECUTION_MODE` | `execution.mode` |
 | `RECON_OUTPUT_DIR` | `storage.output_dir` |
+| `RECON_SINGLE_DOMAIN` | `discovery.single_target_mode` — set to `1` / `true` / `yes` to scan only `RECON_DOMAIN` (no passive discovery) |
 | `GITHUB_TOKEN` | (not mapped into config) | Required by **`github_subdomains`** discovery when not using a `.tokens` file; standard GitHub PAT for [github-subdomains](https://github.com/gwen001/github-subdomains) |
 
 ---

@@ -22,7 +22,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="AutoRecon — reconnaissance and automated assessment pipeline",
     )
-    parser.add_argument("--domain", "-d", help="Target domain (overrides config)")
+    parser.add_argument("--domain", "-d", help="Target domain or hostname (overrides config)")
+    parser.add_argument(
+        "--single-domain",
+        action="store_true",
+        help="Scan only this host/IP: skip subdomain discovery (crt.sh, subfinder, …)",
+    )
     parser.add_argument(
         "--config",
         "-c",
@@ -62,6 +67,8 @@ def main() -> int:
     cli_patch: dict = {}
     if args.domain:
         cli_patch["domain"] = args.domain
+    if args.single_domain:
+        cli_patch.setdefault("discovery", {})["single_target_mode"] = True
     if args.execution:
         cli_patch.setdefault("execution", {})["mode"] = args.execution
 
