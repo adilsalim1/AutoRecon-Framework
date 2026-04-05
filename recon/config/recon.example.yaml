@@ -1,19 +1,14 @@
-# Copy to recon.yaml or pass via --config / RECON_* env vars.
-#
-# Discovery providers (merged, deduped): mock, subfinder, assetfinder, amass_passive,
-# crtsh, waybackurls, shuffledns (needs wordlist+resolvers), massdns (stub).
-# Scanner plugins: mock_scanner, httpx_scanner, nuclei_scanner, subjack_scanner,
-# subzy_scanner, wafw00f_scanner (pip install wafw00f), ffuf_scanner (needs wordlist),
-# secretfinder_scanner (needs script path).
+# Optional overrides only — defaults are already real discovery + real scanners
+# (see recon/core/defaults.py). Use this file to tune workers, webhooks, wordlists, etc.
 
 domain: example.com
 
-# Auto-install missing CLIs required by enabled discovery/scanner plugins (Go, pip, apt on Debian/Ubuntu).
-# Preflight always logs [OK]/[MISSING] before any install. Use: python recon/main.py --check-tools
+# Stream subprocess stdout/stderr to console (prefixed) while capturing for parsers
+stream_subprocess_output: true
+
 bootstrap:
   auto_install: true
 
-# Optional: map logical names to absolute binaries (otherwise $PATH).
 tools:
   subfinder: subfinder
   assetfinder: assetfinder
@@ -28,11 +23,19 @@ tools:
   wafw00f: wafw00f
   python3: python3
 
+# Defaults if omitted: crtsh, subfinder, waybackurls
+# discovery:
+#   providers:
+#     - mock
+
+# Defaults if omitted: httpx_scanner, wafw00f_scanner, nuclei_scanner
+# scanning:
+#   plugins:
+#     - mock_scanner
+
 discovery:
   enabled: true
   expand_subdomains: true
-  providers:
-    - mock
   timeout_seconds: 300
   wordlist: ""
   resolvers: ""
@@ -46,8 +49,6 @@ scanning:
   ffuf_wordlist: ""
   secretfinder_script: ""
   wafw00f_aggressive: false
-  plugins:
-    - mock_scanner
 
 alerts:
   webhook_url: ""

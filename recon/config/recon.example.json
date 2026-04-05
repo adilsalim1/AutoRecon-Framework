@@ -1,10 +1,12 @@
 {
   "domain": "example.com",
+  "stream_subprocess_output": true,
   "bootstrap": {
     "auto_install": true
   },
   "tools": {
     "subfinder": "subfinder",
+    "waybackurls": "waybackurls",
     "httpx": "httpx",
     "nuclei": "nuclei",
     "wafw00f": "wafw00f"
@@ -12,7 +14,6 @@
   "discovery": {
     "enabled": true,
     "expand_subdomains": true,
-    "providers": ["mock"],
     "timeout_seconds": 300,
     "wordlist": "",
     "resolvers": ""
@@ -25,8 +26,7 @@
     "timeout_seconds": 300,
     "ffuf_wordlist": "",
     "secretfinder_script": "",
-    "wafw00f_aggressive": false,
-    "plugins": ["mock_scanner"]
+    "wafw00f_aggressive": false
   },
   "alerts": {
     "webhook_url": "",

@@ -29,15 +29,24 @@ def _host_asset(host: str, parent: str, source: str, **meta: object) -> Asset | 
 
 
 class SubfinderDiscoveryProvider(DiscoveryProvider):
-    def __init__(self, tool_paths: dict[str, str], timeout: int = 300) -> None:
+    def __init__(
+        self,
+        tool_paths: dict[str, str],
+        timeout: int = 300,
+        stream_output: bool = True,
+    ) -> None:
         self._bin = resolve_binary(tool_paths, "subfinder", "subfinder")
         self._timeout = timeout
+        self._stream = stream_output
 
     def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
         parent = domain.strip().lower().rstrip(".")
+        log.info("subfinder: enumerating %s", parent)
         proc = run_tool(
             [self._bin, "-d", parent, "-silent", "-json"],
             timeout=self._timeout,
+            live_output=self._stream,
+            live_prefix="subfinder",
         )
         out: list[Asset] = []
         if proc.returncode != 0 and not proc.stdout.strip():
@@ -56,17 +65,30 @@ class SubfinderDiscoveryProvider(DiscoveryProvider):
                 a = _host_asset(host, parent, "subfinder")
                 if a:
                     out.append(a)
+        log.info("subfinder: parsed %s hostnames for %s", len(out), parent)
         return out
 
 
 class AssetfinderDiscoveryProvider(DiscoveryProvider):
-    def __init__(self, tool_paths: dict[str, str], timeout: int = 300) -> None:
+    def __init__(
+        self,
+        tool_paths: dict[str, str],
+        timeout: int = 300,
+        stream_output: bool = True,
+    ) -> None:
         self._bin = resolve_binary(tool_paths, "assetfinder", "assetfinder")
         self._timeout = timeout
+        self._stream = stream_output
 
     def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
         parent = domain.strip().lower().rstrip(".")
-        proc = run_tool([self._bin, parent], timeout=self._timeout)
+        log.info("assetfinder: querying %s", parent)
+        proc = run_tool(
+            [self._bin, parent],
+            timeout=self._timeout,
+            live_output=self._stream,
+            live_prefix="assetfinder",
+        )
         if proc.returncode != 0:
             log.warning("assetfinder exit=%s stderr=%s", proc.returncode, proc.stderr[:300])
         out: list[Asset] = []
@@ -74,27 +96,45 @@ class AssetfinderDiscoveryProvider(DiscoveryProvider):
             a = _host_asset(line, parent, "assetfinder")
             if a:
                 out.append(a)
+        log.info("assetfinder: parsed %s hosts for %s", len(out), parent)
         return out
 
 
 class AmassPassiveDiscoveryProvider(DiscoveryProvider):
     """Passive enumeration only (no brute force). CLI varies by Amass major version."""
 
-    def __init__(self, tool_paths: dict[str, str], timeout: int = 300) -> None:
+    def __init__(
+        self,
+        tool_paths: dict[str, str],
+        timeout: int = 300,
+        stream_output: bool = True,
+    ) -> None:
         self._bin = resolve_binary(tool_paths, "amass", "amass")
         self._timeout = timeout
+        self._stream = stream_output
 
     def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
         parent = domain.strip().lower().rstrip(".")
+        log.info("amass (passive): enumerating %s", parent)
         for args in (
             ["enum", "-passive", "-d", parent, "-nocolor"],
             ["enum", "-passive", "-d", parent],
         ):
-            proc = run_tool([self._bin, *args], timeout=self._timeout)
+            proc = run_tool(
+                [self._bin, *args],
+                timeout=self._timeout,
+                live_output=self._stream,
+                live_prefix="amass",
+            )
             if proc.stdout.strip():
                 break
         else:
-            proc = run_tool([self._bin, "enum", "-passive", "-d", parent], timeout=self._timeout)
+            proc = run_tool(
+                [self._bin, "enum", "-passive", "-d", parent],
+                timeout=self._timeout,
+                live_output=self._stream,
+                live_prefix="amass",
+            )
         if proc.returncode != 0 and not proc.stdout.strip():
             log.warning("amass exit=%s stderr=%s", proc.returncode, proc.stderr[:300])
         out: list[Asset] = []
@@ -106,6 +146,7 @@ class AmassPassiveDiscoveryProvider(DiscoveryProvider):
             a = _host_asset(host, parent, "amass_passive")
             if a:
                 out.append(a)
+        log.info("amass: parsed %s hosts for %s", len(out), parent)
         return out
 
 
@@ -119,6 +160,7 @@ class CrtShDiscoveryProvider(DiscoveryProvider):
         parent = domain.strip().lower().rstrip(".")
         q = urllib.parse.quote(f"%.{parent}")
         url = f"https://crt.sh/?q={q}&output=json"
+        log.info("crt.sh: fetching certificate transparency for %s", parent)
         req = urllib.request.Request(url, headers={"User-Agent": "AutoRecon-Framework/0.1"})
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
@@ -133,6 +175,7 @@ class CrtShDiscoveryProvider(DiscoveryProvider):
             return []
         if not isinstance(rows, list):
             return []
+        log.info("crt.sh: received %s CT rows for %s", len(rows), parent)
         out: list[Asset] = []
         for row in rows:
             nv = row.get("name_value") or ""
@@ -140,19 +183,32 @@ class CrtShDiscoveryProvider(DiscoveryProvider):
                 a = _host_asset(part, parent, "crtsh")
                 if a:
                     out.append(a)
+        log.info("crt.sh: deduped to %s assets for %s", len(out), parent)
         return out
 
 
 class WaybackurlsDiscoveryProvider(DiscoveryProvider):
     """Historical URLs → unique hostnames as web-oriented assets."""
 
-    def __init__(self, tool_paths: dict[str, str], timeout: int = 300) -> None:
+    def __init__(
+        self,
+        tool_paths: dict[str, str],
+        timeout: int = 300,
+        stream_output: bool = True,
+    ) -> None:
         self._bin = resolve_binary(tool_paths, "waybackurls", "waybackurls")
         self._timeout = timeout
+        self._stream = stream_output
 
     def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
         parent = domain.strip().lower().rstrip(".")
-        proc = run_tool([self._bin, parent], timeout=self._timeout)
+        log.info("waybackurls: fetching historical URLs for %s", parent)
+        proc = run_tool(
+            [self._bin, parent],
+            timeout=self._timeout,
+            live_output=self._stream,
+            live_prefix="waybackurls",
+        )
         if proc.returncode != 0:
             log.warning("waybackurls exit=%s stderr=%s", proc.returncode, proc.stderr[:300])
         hosts: set[str] = set()
@@ -178,6 +234,7 @@ class WaybackurlsDiscoveryProvider(DiscoveryProvider):
                     metadata={"source": "waybackurls"},
                 )
             )
+        log.info("waybackurls: %s in-scope hosts for %s", len(out), parent)
         return out
 
 
@@ -190,17 +247,20 @@ class ShuffleDnsDiscoveryProvider(DiscoveryProvider):
         wordlist: str,
         resolvers: str,
         timeout: int = 600,
+        stream_output: bool = True,
     ) -> None:
         self._bin = resolve_binary(tool_paths, "shuffledns", "shuffledns")
         self._wordlist = wordlist
         self._resolvers = resolvers
         self._timeout = timeout
+        self._stream = stream_output
 
     def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
         parent = domain.strip().lower().rstrip(".")
         if not self._wordlist or not self._resolvers:
             log.info("shuffledns skipped: set discovery.wordlist and discovery.resolvers")
             return []
+        log.info("shuffledns: brute %s (wordlist + resolvers)", parent)
         proc = run_tool(
             [
                 self._bin,
@@ -213,6 +273,8 @@ class ShuffleDnsDiscoveryProvider(DiscoveryProvider):
                 "-silent",
             ],
             timeout=self._timeout,
+            live_output=self._stream,
+            live_prefix="shuffledns",
         )
         if proc.returncode != 0:
             log.warning("shuffledns exit=%s stderr=%s", proc.returncode, proc.stderr[:300])
@@ -221,6 +283,7 @@ class ShuffleDnsDiscoveryProvider(DiscoveryProvider):
             a = _host_asset(line, parent, "shuffledns")
             if a:
                 out.append(a)
+        log.info("shuffledns: %s hosts for %s", len(out), parent)
         return out
 
 

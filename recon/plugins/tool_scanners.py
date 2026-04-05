@@ -18,6 +18,21 @@ def _timeout(ctx: ScanContext, default: int = 300) -> int:
     return int(ctx.metadata.get("scan_timeout_seconds", default))
 
 
+def _run_tool_ctx(
+    ctx: ScanContext,
+    argv: list[str],
+    timeout: int,
+    tool_label: str,
+):
+    """Run external binary; stream lines to stderr when stream_subprocess_output is true."""
+    return run_tool(
+        argv,
+        timeout=timeout,
+        live_output=bool(ctx.metadata.get("stream_subprocess_output", True)),
+        live_prefix=tool_label,
+    )
+
+
 def _map_nuclei_severity(s: str) -> Severity:
     s = (s or "info").lower()
     return {
@@ -45,9 +60,11 @@ class HttpxScannerPlugin(ScannerPlugin):
         err = ""
         last_rc = 0
         for scheme in ("https", "http"):
-            proc = run_tool(
+            proc = _run_tool_ctx(
+                context,
                 [bin_path, "-u", f"{scheme}://{host}", "-silent", "-json", "-timeout", "10"],
                 timeout=_timeout(ctx=context, default=120),
+                tool_label="httpx",
             )
             last_rc = proc.returncode
             err = proc.stderr or err
@@ -109,7 +126,8 @@ class NucleiScannerPlugin(ScannerPlugin):
         lines: list[str] = []
         err_all = ""
         for scheme in ("https", "http"):
-            proc = run_tool(
+            proc = _run_tool_ctx(
+                context,
                 [
                     bin_path,
                     "-u",
@@ -121,6 +139,7 @@ class NucleiScannerPlugin(ScannerPlugin):
                     "15",
                 ],
                 timeout=_timeout(ctx=context, default=600),
+                tool_label="nuclei",
             )
             err_all = proc.stderr or err_all
             if proc.stdout.strip():
@@ -175,9 +194,11 @@ class SubjackScannerPlugin(ScannerPlugin):
                 f.write(t.identifier.strip() + "\n")
             path = f.name
         try:
-            proc = run_tool(
+            proc = _run_tool_ctx(
+                context,
                 [bin_path, "-w", path, "-ssl", "-t", "20", "-timeout", "15"],
                 timeout=_timeout(ctx=context, default=300),
+                tool_label="subjack",
             )
         finally:
             Path(path).unlink(missing_ok=True)
@@ -219,9 +240,11 @@ class SubzyScannerPlugin(ScannerPlugin):
                 f.write(t.identifier.strip() + "\n")
             path = f.name
         try:
-            proc = run_tool(
+            proc = _run_tool_ctx(
+                context,
                 [bin_path, "--targets", path],
                 timeout=_timeout(ctx=context, default=300),
+                tool_label="subzy",
             )
         finally:
             Path(path).unlink(missing_ok=True)
@@ -275,7 +298,7 @@ class Wafw00fScannerPlugin(ScannerPlugin):
             argv = [bin_path, url]
             if aggressive:
                 argv.append("-a")
-            proc = run_tool(argv, timeout=timeout)
+            proc = _run_tool_ctx(context, argv, timeout=timeout, tool_label="wafw00f")
             last_out = proc.stdout or ""
             last_err = proc.stderr or ""
             last_rc = proc.returncode
@@ -392,7 +415,8 @@ class FfufScannerPlugin(ScannerPlugin):
         host = targets[0].identifier.strip()
         bin_path = resolve_binary(context.metadata.get("tool_paths") or {}, "ffuf", "ffuf")
         url = f"https://{host}/FUZZ"
-        proc = run_tool(
+        proc = _run_tool_ctx(
+            context,
             [
                 bin_path,
                 "-u",
@@ -407,6 +431,7 @@ class FfufScannerPlugin(ScannerPlugin):
                 "10",
             ],
             timeout=_timeout(ctx=context, default=600),
+            tool_label="ffuf",
         )
         return RawScanResult(
             scanner_name=self.name,
@@ -464,9 +489,11 @@ class SecretFinderScannerPlugin(ScannerPlugin):
             return RawScanResult(scanner_name=self.name, success=True, raw_payload={"stdout": ""})
         host = targets[0].identifier.strip()
         url = f"https://{host}"
-        proc = run_tool(
+        proc = _run_tool_ctx(
+            context,
             [py, script, "-i", url, "-o", "cli"],
             timeout=_timeout(ctx=context, default=300),
+            tool_label="secretfinder",
         )
         return RawScanResult(
             scanner_name=self.name,

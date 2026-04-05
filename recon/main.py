@@ -28,7 +28,7 @@ def main() -> int:
         "-c",
         type=Path,
         default=None,
-        help="Path to YAML configuration",
+        help="Optional YAML/JSON overrides; defaults already use real crt.sh+subfinder+wayback and httpx+wafw00f+nuclei",
     )
     parser.add_argument(
         "--scan",

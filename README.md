@@ -37,6 +37,7 @@ Modular attack-surface reconnaissance and automated assessment pipeline for **Py
 - **Webhook alerts**: severity thresholds, batching, in-run deduplication.
 - **Debian-oriented bootstrap**: optional auto-install via `go install`, `pip`, and `apt-get` (see [External tools and bootstrap](#external-tools-and-bootstrap)).
 - **Preflight tool checks**: logs `[OK]` / `[MISSING]` before installs; `--check-tools` for CI-style validation.
+- **Real defaults without a config file**: discovery uses **crt.sh**, **subfinder**, and **waybackurls**; scanning uses **httpx**, **wafw00f**, and **nuclei** (see `recon/core/defaults.py`). `--config` is optional for overrides only.
 
 ---
 
@@ -70,14 +71,16 @@ python recon/main.py --help
 ## Quick start
 
 ```bash
-# Default config is in-memory (mock discovery + mock scanner); domain from CLI
-PYTHONPATH=. python recon/main.py --domain example.com --scan quick
+# Real discovery + real scanners by default (needs network, Go/pip tools, or bootstrap auto_install)
+cd AutoRecon-Framework
+export PYTHONPATH=.
+python3 recon/main.py --domain example.com --scan full
 
-# Use a copied example config
-cp recon/config/recon.example.yaml my-recon.yaml
-# Edit domain, discovery.providers, scanning.plugins, etc.
-PYTHONPATH=. python recon/main.py --config my-recon.yaml --domain target.example
+# Optional: YAML/JSON only to override workers, webhooks, wordlists, or swap providers
+python3 recon/main.py --config recon/config/recon.example.json --domain target.example --scan quick
 ```
+
+For **offline tests** only, use a small config that sets `discovery.providers` to `["mock"]` and `scanning.plugins` to `["mock_scanner"]`.
 
 ---
 
@@ -88,7 +91,7 @@ All flags are defined in `recon/main.py`.
 | Option | Description |
 |--------|-------------|
 | `-d`, `--domain` | Target domain (overrides config `domain`) |
-| `-c`, `--config` | Path to YAML or JSON configuration file |
+| `-c`, `--config` | Optional YAML/JSON overrides (defaults are already real discovery + scanners) |
 | `--scan` | One of `full`, `quick`, `none`: `full` uses parallel scanning when workers > 1; `quick` forces one worker and sequential mode; `none` skips scanning |
 | `--execution` | `sequential` or `async`; overrides `execution.mode` in config |
 | `--install-tools` | Install **all** supported external tools (then exit; status code 0/1) |
@@ -107,13 +110,16 @@ PYTHONPATH=. python recon/main.py --no-auto-tools -d example.com --scan full
 
 ## Configuration
 
+**You do not need a config file** for a normal run: built-in defaults live in `recon/core/defaults.py` (`crtsh`, `subfinder`, `waybackurls` → `httpx_scanner`, `wafw00f_scanner`, `nuclei_scanner`).
+
 Configuration is merged in this order (later wins):
 
-1. Optional **file** (`--config`): YAML (needs PyYAML) or JSON  
-2. **Environment** variables (`RECON_*`)  
-3. **CLI** overrides (`--domain`, `--execution`)
+1. **Built-in defaults** (from `defaults.py` / `AppConfig` dataclasses)  
+2. Optional **file** (`--config`): YAML (needs PyYAML) or JSON  
+3. **Environment** variables (`RECON_*`)  
+4. **CLI** overrides (`--domain`, `--execution`)
 
-Top-level and nested keys match the dataclasses in `recon/core/config_loader.py`. A commented reference lives in:
+Top-level and nested keys match the dataclasses in `recon/core/config_loader.py`. Example overrides (not required) live in:
 
 - `recon/config/recon.example.yaml`
 - `recon/config/recon.example.json`
@@ -131,6 +137,7 @@ Top-level and nested keys match the dataclasses in `recon/core/config_loader.py`
 | `execution` | `mode` (`sequential` \| `async`), `max_retries`, `retry_backoff_seconds` |
 | `storage` | `output_dir` (relative to **current working directory** unless absolute), `backend` (reserved; JSON implemented) |
 | `log_level`, `log_json` | Logging behavior |
+| `stream_subprocess_output` | Default `true`: external tools’ **stdout/stderr** are echoed to the console (with `[tool:stdout]` / `[tool:stderr]` prefixes) while output is still captured for parsers. Set `false` for quieter logs. |
 
 ---
 
@@ -165,7 +172,7 @@ Retries apply per stage in the engine (`execution.max_retries`).
 
 ## Discovery providers
 
-Configured under `discovery.providers` (list). Multiple entries are merged by `CompositeDiscoveryProvider` and deduplicated; the apex domain is injected if missing.
+Configured under `discovery.providers` (list). **If omitted**, defaults are **`crtsh`**, **`subfinder`**, **`waybackurls`**. Multiple entries are merged by `CompositeDiscoveryProvider` and deduplicated; the apex domain is injected if missing.
 
 | Provider name | External dependency | Notes |
 |-----------------|---------------------|--------|
@@ -182,7 +189,7 @@ Configured under `discovery.providers` (list). Multiple entries are merged by `C
 
 ## Scanner plugins
 
-Configured under `scanning.plugins` (list). Registered in `recon/plugins/registry.py`.
+Configured under `scanning.plugins` (list). **If omitted**, defaults are **`httpx_scanner`**, **`wafw00f_scanner`**, **`nuclei_scanner`**. Registered in `recon/plugins/registry.py`.
 
 | Plugin | Dependency | Notes |
 |--------|------------|--------|

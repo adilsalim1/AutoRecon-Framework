@@ -6,12 +6,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from recon.core.defaults import DEFAULT_DISCOVERY_PROVIDERS, DEFAULT_SCANNING_PLUGINS
+
 
 @dataclass
 class DiscoveryConfig:
     enabled: bool = True
     expand_subdomains: bool = True
-    providers: list[str] = field(default_factory=lambda: ["mock"])
+    providers: list[str] = field(default_factory=lambda: list(DEFAULT_DISCOVERY_PROVIDERS))
     timeout_seconds: int = 300
     wordlist: str = ""
     resolvers: str = ""
@@ -22,7 +24,7 @@ class ScanningConfig:
     enabled: bool = True
     parallel_workers: int = 4
     rate_limit_per_second: float = 5.0
-    plugins: list[str] = field(default_factory=lambda: ["mock_scanner"])
+    plugins: list[str] = field(default_factory=lambda: list(DEFAULT_SCANNING_PLUGINS))
     skip_duplicate_targets: bool = True
     timeout_seconds: int = 300
     ffuf_wordlist: str = ""
@@ -62,6 +64,8 @@ class BootstrapConfig:
 @dataclass
 class AppConfig:
     domain: str = ""
+    stream_subprocess_output: bool = True
+    """Echo external tool stdout/stderr to the console while capturing for parsers."""
     tool_paths: dict[str, str] = field(default_factory=dict)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     scanning: ScanningConfig = field(default_factory=ScanningConfig)
@@ -86,15 +90,25 @@ class AppConfig:
             tool_paths = {str(k): str(v) for k, v in tools.items() if v is not None}
         prov = d.get("providers")
         if prov is None:
-            prov_list = ["mock"]
+            prov_list = list(DEFAULT_DISCOVERY_PROVIDERS)
         elif isinstance(prov, list):
             prov_list = [str(x).strip() for x in prov if str(x).strip()]
             if not prov_list:
-                prov_list = ["mock"]
+                prov_list = list(DEFAULT_DISCOVERY_PROVIDERS)
         else:
-            prov_list = ["mock"]
+            prov_list = list(DEFAULT_DISCOVERY_PROVIDERS)
+        spl = s.get("plugins")
+        if spl is None:
+            plug_list = list(DEFAULT_SCANNING_PLUGINS)
+        elif isinstance(spl, list):
+            plug_list = [str(x).strip() for x in spl if str(x).strip()]
+            if not plug_list:
+                plug_list = list(DEFAULT_SCANNING_PLUGINS)
+        else:
+            plug_list = list(DEFAULT_SCANNING_PLUGINS)
         return cls(
             domain=data.get("domain", ""),
+            stream_subprocess_output=bool(data.get("stream_subprocess_output", True)),
             tool_paths=tool_paths,
             discovery=DiscoveryConfig(
                 enabled=d.get("enabled", True),
@@ -108,7 +122,7 @@ class AppConfig:
                 enabled=s.get("enabled", True),
                 parallel_workers=int(s.get("parallel_workers", 4)),
                 rate_limit_per_second=float(s.get("rate_limit_per_second", 5)),
-                plugins=list(s.get("plugins", ["mock_scanner"])),
+                plugins=plug_list,
                 skip_duplicate_targets=s.get("skip_duplicate_targets", True),
                 timeout_seconds=int(s.get("timeout_seconds", 300)),
                 ffuf_wordlist=str(s.get("ffuf_wordlist", "") or ""),

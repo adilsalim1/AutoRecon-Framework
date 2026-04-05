@@ -54,8 +54,17 @@ class ScanEngine:
     ) -> tuple[list[Finding], RawScanResult | None, str | None]:
         fp = asset.fingerprint_for_scan(plugin.name)
         if self._skip_duplicates and self._has_fp(fp):
-            log.debug("skip duplicate scan %s %s", plugin.name, asset.identifier)
+            log.info(
+                "scan skip (already scanned) %s → %s",
+                plugin.name,
+                asset.identifier,
+            )
             return [], None, fp
+        log.info(
+            "scan start %s → %s",
+            plugin.name,
+            asset.identifier,
+        )
         raw = plugin.run([asset], self._context(domain))
         if not raw.success:
             log.warning(
@@ -67,6 +76,12 @@ class ScanEngine:
             return [], raw, fp
         parsed = plugin.parse(raw)
         normalized = plugin.normalize(parsed)
+        log.info(
+            "scan done %s → %s (%s findings)",
+            plugin.name,
+            asset.identifier,
+            len(normalized),
+        )
         for f in normalized:
             if not f.asset_id:
                 f.asset_id = asset.stable_id()
@@ -141,7 +156,13 @@ class ScanEngine:
             nonlocal findings, records
             fp = asset.fingerprint_for_scan(plugin.name)
             if self._skip_duplicates and self._has_fp(fp):
+                log.info(
+                    "scan skip (already scanned) %s → %s",
+                    plugin.name,
+                    asset.identifier,
+                )
                 return
+            log.info("scan start %s → %s", plugin.name, asset.identifier)
             async with rl:
                 raw = await plugin.run_async([asset], self._context(domain))
             if not raw.success:
@@ -154,6 +175,12 @@ class ScanEngine:
                 return
             parsed = plugin.parse(raw)
             normalized = plugin.normalize(parsed)
+            log.info(
+                "scan done %s → %s (%s findings)",
+                plugin.name,
+                asset.identifier,
+                len(normalized),
+            )
             for f in normalized:
                 if not f.asset_id:
                     f.asset_id = asset.stable_id()

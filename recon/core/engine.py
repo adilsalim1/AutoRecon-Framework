@@ -79,6 +79,11 @@ class PipelineEngine:
 
         # 1) Discovery
         try:
+            log.info(
+                "discovery start domain=%s providers=%s",
+                dom,
+                self.config.discovery.providers,
+            )
             if not self.config.discovery.enabled:
                 assets = [
                     Asset(
@@ -99,6 +104,8 @@ class PipelineEngine:
         except Exception as e:
             result.errors.append(str(e))
             return result
+
+        log.info("discovery complete raw_assets=%s", len(assets))
 
         # 2) Analysis
         try:
@@ -125,6 +132,12 @@ class PipelineEngine:
             try:
                 plugin_names = list(self.config.scanning.plugins)
                 plugins = self._registry.resolve(plugin_names)
+                log.info(
+                    "scanning stage: %s assets × %s plugins [%s]",
+                    len(analyzed),
+                    len(plugins),
+                    ", ".join(plugin_names),
+                )
             except KeyError as e:
                 result.errors.append(f"plugin resolution: {e}")
                 self._finalize_notifications(result, findings, run_id, dom)
@@ -136,6 +149,7 @@ class PipelineEngine:
                 "ffuf_wordlist": self.config.scanning.ffuf_wordlist,
                 "secretfinder_script": self.config.scanning.secretfinder_script,
                 "wafw00f_aggressive": self.config.scanning.wafw00f_aggressive,
+                "stream_subprocess_output": self.config.stream_subprocess_output,
             }
             engine = ScanEngine(
                 plugins=plugins,
