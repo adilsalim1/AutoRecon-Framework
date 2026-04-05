@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -293,3 +294,51 @@ class MassDnsDiscoveryProvider(DiscoveryProvider):
     def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
         log.info("massdns provider is a stub — integrate via custom DiscoveryProvider or pipeline step")
         return []
+
+
+class GithubSubdomainsDiscoveryProvider(DiscoveryProvider):
+    """
+    [gwen001/github-subdomains](https://github.com/gwen001/github-subdomains) — code search on GitHub for hostnames.
+    Requires a GitHub token: `GITHUB_TOKEN` env var, `-t` via wrapper, or `.tokens` in the process working directory.
+    """
+
+    def __init__(
+        self,
+        tool_paths: dict[str, str],
+        timeout: int = 600,
+        stream_output: bool = True,
+    ) -> None:
+        self._bin = resolve_binary(tool_paths, "github_subdomains", "github-subdomains")
+        self._timeout = max(timeout, 120)
+        self._stream = stream_output
+
+    def discover(self, domain: str, expand_subdomains: bool = True) -> list[Asset]:
+        parent = domain.strip().lower().rstrip(".")
+        if not (os.environ.get("GITHUB_TOKEN") or "").strip():
+            log.info(
+                "github-subdomains: GITHUB_TOKEN unset — binary may still use a `.tokens` file in cwd "
+                "(see https://github.com/gwen001/github-subdomains)"
+            )
+        log.info("github-subdomains: searching GitHub code for %s", parent)
+        proc = run_tool(
+            [self._bin, "-d", parent, "-raw"],
+            timeout=self._timeout,
+            live_output=self._stream,
+            live_prefix="github-subdomains",
+        )
+        if proc.returncode != 0 and not proc.stdout.strip():
+            log.warning(
+                "github-subdomains exit=%s stderr=%s",
+                proc.returncode,
+                (proc.stderr or "")[:500],
+            )
+        out: list[Asset] = []
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("[") or " " in line:
+                continue
+            a = _host_asset(line, parent, "github_subdomains")
+            if a:
+                out.append(a)
+        log.info("github-subdomains: parsed %s hosts for %s", len(out), parent)
+        return out

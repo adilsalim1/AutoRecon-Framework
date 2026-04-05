@@ -9,6 +9,7 @@ from recon.modules.discovery_external import (
     AmassPassiveDiscoveryProvider,
     AssetfinderDiscoveryProvider,
     CrtShDiscoveryProvider,
+    GithubSubdomainsDiscoveryProvider,
     MassDnsDiscoveryProvider,
     ShuffleDnsDiscoveryProvider,
     SubfinderDiscoveryProvider,
@@ -59,6 +60,14 @@ def build_discovery(config: AppConfig) -> DiscoveryProvider:
                 WaybackurlsDiscoveryProvider(
                     config.tool_paths,
                     timeout=config.discovery.timeout_seconds,
+                    stream_output=stream,
+                )
+            )
+        elif n in ("github_subdomains", "github-subdomains", "githubsubdomains"):
+            parts.append(
+                GithubSubdomainsDiscoveryProvider(
+                    config.tool_paths,
+                    timeout=max(config.discovery.timeout_seconds, 600),
                     stream_output=stream,
                 )
             )

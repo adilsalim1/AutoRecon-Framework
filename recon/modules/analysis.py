@@ -43,6 +43,21 @@ class AssetAnalyzer:
         elif at == AssetType.WEB:
             tags.add("surface")
             priority = Priority.HIGH if "www" in asset.identifier else Priority.MEDIUM
+        elif at == AssetType.SUBDOMAIN:
+            # TBHM-style triage: non-www hosts are often less “flagship” (heuristic only).
+            tags.add("surface")
+            hid = asset.identifier.lower().strip().rstrip(".")
+            if not hid.startswith("www."):
+                tags.add("non_www")
+            priority = Priority.MEDIUM
+        elif at == AssetType.IP:
+            tags.add("surface")
+            tags.add("port_scan_candidate")
+            priority = Priority.MEDIUM
+        elif at == AssetType.JAVASCRIPT:
+            tags.add("script")
+            tags.add("secret_analysis_candidate")
+            priority = Priority.HIGH
 
         meta = dict(asset.metadata)
         meta.setdefault("analyzed", True)

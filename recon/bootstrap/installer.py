@@ -140,9 +140,15 @@ def check_tools_for_config(config: AppConfig) -> tuple[bool, dict[str, tuple[boo
     """
     prepend_user_local_bin_to_path()
     prepend_go_bin_to_path()
+    col = (
+        list(config.collection.providers)
+        if getattr(config, "collection", None) and config.collection.enabled
+        else []
+    )
     keys = required_tool_keys_for_config(
         list(config.discovery.providers),
         list(config.scanning.plugins),
+        col,
     )
     results: dict[str, tuple[bool, str]] = {}
     all_ok = True
@@ -285,6 +291,13 @@ def install_spec(
     if _have_tool_with_config(spec, tp):
         return True
     to = 300 * timeout_scale
+    # Apt first when present so build deps (e.g. libpcap for naabu) exist before go install.
+    if spec.apt_packages:
+        ok, msg = _apt_install(spec.apt_packages, timeout=max(900, to))
+        if ok:
+            log.info("apt installed %s: %s", spec.key, spec.apt_packages)
+        else:
+            log.warning("apt install failed for %s: %s", spec.key, msg)
     if spec.pip_package:
         ok, msg = _pip_install(spec.pip_package, timeout=max(600, to))
         if ok:
@@ -300,12 +313,6 @@ def install_spec(
             return bool(_which_any(spec.check_names))
         log.warning("go install failed for %s: %s", spec.key, msg)
         return bool(_which_any(spec.check_names))
-    if spec.apt_packages:
-        ok, msg = _apt_install(spec.apt_packages, timeout=max(900, to))
-        if ok:
-            log.info("apt installed %s: %s", spec.key, spec.apt_packages)
-            return bool(_which_any(spec.check_names))
-        log.warning("apt install failed for %s: %s", spec.key, msg)
     return bool(_which_any(spec.check_names))
 
 
@@ -320,9 +327,15 @@ def ensure_tools_for_config(config: AppConfig) -> list[str]:
     """
     prepend_user_local_bin_to_path()
     prepend_go_bin_to_path()
+    col = (
+        list(config.collection.providers)
+        if getattr(config, "collection", None) and config.collection.enabled
+        else []
+    )
     keys = required_tool_keys_for_config(
         list(config.discovery.providers),
         list(config.scanning.plugins),
+        col,
     )
     log_preflight_tools(
         keys,

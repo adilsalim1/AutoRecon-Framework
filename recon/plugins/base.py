@@ -39,6 +39,11 @@ class ScannerPlugin(ABC):
 
     name: str = "abstract"
     version: str = "0.0.0"
+    scan_tier: str = "safe"
+    """
+    safe: always run when the asset is in scope.
+    aggressive: skipped for hosts marked WAF-protected when waf_skip_aggressive is enabled.
+    """
 
     @abstractmethod
     def run(self, targets: list[Asset], context: ScanContext) -> RawScanResult:

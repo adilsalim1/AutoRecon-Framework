@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import logging
+import os
+import re
+import shutil
 import subprocess
 import sys
 import threading
 from pathlib import Path
+
+# Use stdlib logger only here to avoid importing recon.core (circular via plugins/registry).
+_log = logging.getLogger("recon.tool_runner")
+
+# httpx -h output → is this ProjectDiscovery's CLI (not Encode/python-httpx)?
+_HTTPX_PD_CACHE: dict[str, bool] = {}
 
 
 def resolve_binary(tool_paths: dict[str, str], key: str, default: str | None = None) -> str:
@@ -15,6 +25,102 @@ def resolve_binary(tool_paths: dict[str, str], key: str, default: str | None = N
     if p.is_file():
         return str(p.resolve())
     return val
+
+
+def _httpx_help_looks_like_projectdiscovery(text: str) -> bool:
+    """Distinguish ProjectDiscovery httpx from Encode's `httpx` CLI (positional URL only)."""
+    t = (text or "").lower()
+    if re.search(r"usage:\s*httpx\s+\[options\]\s+url\b", t):
+        return False
+    if "projectdiscovery" in t or "project discovery" in t:
+        return True
+    if "-silent" in t and "-json" in t:
+        return True
+    if re.search(r"[\s,/-]-u[\s,]", t):
+        return True
+    return False
+
+
+def httpx_binary_is_projectdiscovery(bin_path: str) -> bool:
+    """True if `bin_path -h` looks like ProjectDiscovery httpx (cached)."""
+    if bin_path in _HTTPX_PD_CACHE:
+        return _HTTPX_PD_CACHE[bin_path]
+    try:
+        proc = run_tool([bin_path, "-h"], timeout=15, live_output=False)
+    except (FileNotFoundError, OSError):
+        _HTTPX_PD_CACHE[bin_path] = False
+        return False
+    merged = (proc.stdout or "") + (proc.stderr or "")
+    ok = _httpx_help_looks_like_projectdiscovery(merged)
+    _HTTPX_PD_CACHE[bin_path] = ok
+    return ok
+
+
+def resolve_httpx_binary(tool_paths: dict[str, str]) -> str:
+    """
+    Resolve httpx for scanning: prefer explicit `tools.httpx`, then Go install path,
+    then first `httpx` on PATH that looks like ProjectDiscovery (not Encode/python-httpx).
+    """
+    explicit = (tool_paths.get("httpx") or "").strip()
+    if explicit:
+        p = Path(explicit).expanduser()
+        chosen = str(p.resolve()) if p.is_file() else explicit
+        if chosen and not httpx_binary_is_projectdiscovery(chosen):
+            _log.warning(
+                "tools.httpx (%s) does not look like ProjectDiscovery httpx; "
+                "expect JSON probe output. Install: go install github.com/projectdiscovery/httpx/cmd/httpx@latest",
+                chosen,
+            )
+        return chosen
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_file(path: Path) -> None:
+        try:
+            path = path.expanduser()
+            if path.is_file():
+                s = str(path.resolve())
+                if s not in seen:
+                    seen.add(s)
+                    candidates.append(s)
+        except OSError:
+            pass
+
+    gp = os.environ.get("GOPATH", "").strip()
+    if gp:
+        add_file(Path(gp) / "bin" / "httpx")
+    try:
+        r = subprocess.run(
+            ["go", "env", "GOPATH"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        line = (r.stdout or "").strip().splitlines()
+        if line:
+            add_file(Path(line[0]) / "bin" / "httpx")
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    add_file(Path.home() / "go" / "bin" / "httpx")
+
+    for cand in candidates:
+        if httpx_binary_is_projectdiscovery(cand):
+            return cand
+
+    which = shutil.which("httpx")
+    if which:
+        if httpx_binary_is_projectdiscovery(which):
+            return which
+        _log.warning(
+            "First `httpx` on PATH (%s) is not ProjectDiscovery httpx (often `pip install httpx`). "
+            "Use: go install github.com/projectdiscovery/httpx/cmd/httpx@latest "
+            "and set tools.httpx to \"$(go env GOPATH)/bin/httpx\".",
+            which,
+        )
+        return which
+    return "httpx"
 
 
 def run_tool(

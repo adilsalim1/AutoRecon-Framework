@@ -30,6 +30,17 @@ class Finding:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     asset_id: str | None = None
     raw_reference: str | None = None
+    # Extended PT fields (optional for backward compatibility)
+    confidence: float | None = None
+    """0.0–1.0 when set; higher = more reliable match."""
+    exploitability: str | None = None
+    """Short label, e.g. immediate, chained, theoretical."""
+    source_ref: str | None = None
+    """Primary evidence URL, file URL, or response source."""
+    attack_path: list[str] = field(default_factory=list)
+    """Ordered narrative steps for correlated chains."""
+    risk_score: float | None = None
+    """Computed prioritization score (see risk_scoring module)."""
 
     def dedupe_key(self) -> str:
         payload = json.dumps(
@@ -38,13 +49,14 @@ class Finding:
                 "vulnerability_type": self.vulnerability_type,
                 "severity": self.severity.value,
                 "source": self.source_scanner,
+                "attack_path": self.attack_path,
             },
             sort_keys=True,
         )
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "target": self.target,
             "vulnerability_type": self.vulnerability_type,
             "severity": self.severity.value,
@@ -57,6 +69,17 @@ class Finding:
             "raw_reference": self.raw_reference,
             "dedupe_key": self.dedupe_key(),
         }
+        if self.confidence is not None:
+            d["confidence"] = self.confidence
+        if self.exploitability:
+            d["exploitability"] = self.exploitability
+        if self.source_ref:
+            d["source_ref"] = self.source_ref
+        if self.attack_path:
+            d["attack_path"] = list(self.attack_path)
+        if self.risk_score is not None:
+            d["risk_score"] = self.risk_score
+        return d
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> Finding:
@@ -73,4 +96,9 @@ class Finding:
             ),
             asset_id=data.get("asset_id"),
             raw_reference=data.get("raw_reference"),
+            confidence=data.get("confidence"),
+            exploitability=data.get("exploitability"),
+            source_ref=data.get("source_ref"),
+            attack_path=list(data.get("attack_path", []) or []),
+            risk_score=data.get("risk_score"),
         )

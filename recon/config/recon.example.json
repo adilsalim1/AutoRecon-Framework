@@ -6,10 +6,25 @@
   },
   "tools": {
     "subfinder": "subfinder",
+    "assetfinder": "assetfinder",
+    "amass": "amass",
+    "github_subdomains": "github-subdomains",
+    "shuffledns": "shuffledns",
     "waybackurls": "waybackurls",
+    "gau": "gau",
+    "katana": "katana",
+    "hakrawler": "hakrawler",
     "httpx": "httpx",
     "nuclei": "nuclei",
-    "wafw00f": "wafw00f"
+    "subjack": "subjack",
+    "subzy": "subzy",
+    "ffuf": "ffuf",
+    "wafw00f": "wafw00f",
+    "naabu": "naabu",
+    "nmap": "nmap",
+    "whatweb": "whatweb",
+    "wappalyzer": "wappalyzer",
+    "python3": "python3"
   },
   "discovery": {
     "enabled": true,
@@ -18,15 +33,24 @@
     "wordlist": "",
     "resolvers": ""
   },
+  "collection": {
+    "enabled": true,
+    "providers": ["gau", "waybackurls", "katana", "hakrawler"],
+    "timeout_seconds": 300,
+    "max_urls_per_host": 300,
+    "max_crawl_seeds": 15
+  },
   "scanning": {
     "enabled": true,
+    "live_hosts_only": false,
     "parallel_workers": 4,
     "rate_limit_per_second": 10,
     "skip_duplicate_targets": true,
     "timeout_seconds": 300,
-    "ffuf_wordlist": "",
     "secretfinder_script": "",
-    "wafw00f_aggressive": false
+    "wafw00f_aggressive": true,
+    "waf_skip_aggressive": false,
+    "js_analysis_enabled": true
   },
   "alerts": {
     "webhook_url": "",

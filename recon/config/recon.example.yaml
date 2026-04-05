@@ -1,9 +1,8 @@
-# Optional overrides only — defaults are already real discovery + real scanners
-# (see recon/core/defaults.py). Use this file to tune workers, webhooks, wordlists, etc.
+# Optional overrides — built-in defaults already run the full pipeline (all discovery
+# sources, URL collection, every registered scanner, JS analysis). Narrow scope here if needed.
 
 domain: example.com
 
-# Stream subprocess stdout/stderr to console (prefixed) while capturing for parsers
 stream_subprocess_output: true
 
 bootstrap:
@@ -14,7 +13,11 @@ tools:
   assetfinder: assetfinder
   amass: amass
   waybackurls: waybackurls
+  github_subdomains: github-subdomains
   shuffledns: shuffledns
+  gau: gau
+  katana: katana
+  hakrawler: hakrawler
   httpx: httpx
   nuclei: nuclei
   subjack: subjack
@@ -22,17 +25,13 @@ tools:
   ffuf: ffuf
   wafw00f: wafw00f
   python3: python3
+  naabu: naabu
+  nmap: nmap
+  whatweb: whatweb
+  wappalyzer: wappalyzer
 
-# Defaults if omitted: crtsh, subfinder, waybackurls
-# discovery:
-#   providers:
-#     - mock
-
-# Defaults if omitted: httpx_scanner, wafw00f_scanner, nuclei_scanner
-# scanning:
-#   plugins:
-#     - mock_scanner
-
+# Defaults (if omitted): crtsh, subfinder, waybackurls, assetfinder, amass_passive,
+# github_subdomains, shuffledns, massdns — set discovery.wordlist + discovery.resolvers for shuffledns brute.
 discovery:
   enabled: true
   expand_subdomains: true
@@ -40,15 +39,43 @@ discovery:
   wordlist: ""
   resolvers: ""
 
+# Defaults: enabled; gau, waybackurls, katana, hakrawler
+collection:
+  enabled: true
+  providers:
+    - gau
+    - waybackurls
+    - katana
+    - hakrawler
+  timeout_seconds: 300
+  max_urls_per_host: 300
+  max_crawl_seeds: 15
+  linkfinder_script: ""
+
+# Defaults: all scanners (httpx, wafw00f, nuclei, whatweb, wappalyzer, naabu, nmap,
+# subjack, subzy, ffuf, vhost_ffuf, secretfinder); live_hosts_only false; waf_skip_aggressive false;
+# js_analysis_enabled true; ffuf wordlist = recon/data/ffuf-quick.txt unless overridden.
 scanning:
   enabled: true
+  live_hosts_only: false
   parallel_workers: 4
   rate_limit_per_second: 10
   skip_duplicate_targets: true
   timeout_seconds: 300
-  ffuf_wordlist: ""
+  # ffuf_wordlist: ""   # empty in YAML → bundled recon/data/ffuf-quick.txt
+  # vhost_ffuf_wordlist: ""   # empty → recon/data/wl-vhost.txt
+  # vhost_ffuf_filter_size: 4242
+  # vhost_ffuf_autocalibrate: true
+  # naabu_top_ports: 100
+  # nmap_top_ports: 50
+  # nmap_scripts: ""
+  # nmap_scan_timeout_seconds: 900
   secretfinder_script: ""
-  wafw00f_aggressive: false
+  wafw00f_aggressive: true
+  # waf_skip_aggressive: false   # default: run aggressive scanners even on WAF hosts
+  # api_endpoint_priority: true
+  # max_js_analyze: 40
+  # url_secret_scan_max: 500
 
 alerts:
   webhook_url: ""

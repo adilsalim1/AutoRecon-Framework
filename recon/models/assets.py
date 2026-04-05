@@ -15,6 +15,7 @@ class AssetType(str, Enum):
     WEB = "web"
     API = "api"
     AUTH = "auth"
+    JAVASCRIPT = "javascript"
     UNKNOWN = "unknown"
 
 

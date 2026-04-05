@@ -4,13 +4,17 @@ from typing import Type
 
 from recon.plugins.base import ScannerPlugin
 from recon.plugins.mock_scanner import MockVulnerabilityScanner
+from recon.plugins.tech_scanners import WappalyzerScannerPlugin, WhatWebScannerPlugin
 from recon.plugins.tool_scanners import (
     FfufScannerPlugin,
     HttpxScannerPlugin,
+    NaabuScannerPlugin,
+    NmapScannerPlugin,
     NucleiScannerPlugin,
     SecretFinderScannerPlugin,
     SubjackScannerPlugin,
     SubzyScannerPlugin,
+    VhostFfufScannerPlugin,
     Wafw00fScannerPlugin,
 )
 
@@ -41,6 +45,11 @@ def load_builtin_plugins() -> PluginRegistry:
     reg.register(SubjackScannerPlugin)
     reg.register(SubzyScannerPlugin)
     reg.register(Wafw00fScannerPlugin)
+    reg.register(NaabuScannerPlugin)
+    reg.register(NmapScannerPlugin)
     reg.register(FfufScannerPlugin)
+    reg.register(VhostFfufScannerPlugin)
     reg.register(SecretFinderScannerPlugin)
+    reg.register(WhatWebScannerPlugin)
+    reg.register(WappalyzerScannerPlugin)
     return reg

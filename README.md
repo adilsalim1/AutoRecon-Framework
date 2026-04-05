@@ -23,13 +23,16 @@ Modular attack-surface reconnaissance and automated assessment pipeline for **Py
 - [Alerts (webhooks)](#alerts-webhooks)
 - [Project layout](#project-layout)
 - [Extending the framework](#extending-the-framework)
+- [Methodology alignment (bug bounty recon)](#methodology-alignment-bug-bounty-recon)
+- [The Bug Hunter’s Methodology (TBHM)](#the-bug-hunters-methodology-tbhm)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Features
 
 - **Composable discovery**: multiple sources merged and deduplicated (subdomains, CT logs, Wayback-derived hosts, etc.).
-- **Analysis layer**: priority and tagging (API, auth, web, apex) before scanning.
+- **Analysis layer**: priority and tagging (API, auth, web, apex, **`non_www`** subdomain heuristic, **`port_scan_candidate`** on IPs) before scanning.
 - **Plugin-based scanners**: standard contract (`run` → `parse` → `normalize`) with optional async execution.
 - **Concurrency**: sequential, parallel (thread pool), or async scanning with shared rate limiting.
 - **Duplicate scan suppression**: fingerprints persisted under the storage output directory.
@@ -37,7 +40,8 @@ Modular attack-surface reconnaissance and automated assessment pipeline for **Py
 - **Webhook alerts**: severity thresholds, batching, in-run deduplication.
 - **Debian-oriented bootstrap**: optional auto-install via `go install`, `pip`, and `apt-get` (see [External tools and bootstrap](#external-tools-and-bootstrap)).
 - **Preflight tool checks**: logs `[OK]` / `[MISSING]` before installs; `--check-tools` for CI-style validation.
-- **Real defaults without a config file**: discovery uses **crt.sh**, **subfinder**, and **waybackurls**; scanning uses **httpx**, **wafw00f**, and **nuclei** (see `recon/core/defaults.py`). `--config` is optional for overrides only.
+- **Real defaults without a config file**: discovery uses **all built-in sources** (crt.sh, subfinder, waybackurls, assetfinder, amass passive, GitHub subdomains, shuffledns, massdns stub); **URL collection** runs **gau**, **waybackurls**, **katana**, and **hakrawler**; scanning runs **every registered scanner** including **naabu**, **nmap**, **subjack**, **subzy**, **ffuf** (bundled `recon/data/ffuf-quick.txt`), **vhost ffuf**, **whatweb**, **wappalyzer**, and **secretfinder** (no-op until `scanning.secretfinder_script` is set). **`live_hosts_only` defaults to `false`** so non-httpx scanners see **all** assets; set `true` to gate on httpx-live hosts only. **`waf_skip_aggressive` defaults to `false`** so aggressive plugins still run when a WAF is detected (set `true` to skip them). See `recon/core/defaults.py`.
+- **Methodology visibility**: [`recon/docs/METHODOLOGY.md`](recon/docs/METHODOLOGY.md) maps checklist-style recon playbooks to the pipeline; [**TBHM** (Jason Haddix)](recon/docs/TBHM.md) aligns with [jhaddix/tbhm](https://github.com/jhaddix/tbhm) (Discovery, mapping, port-scan themes). Image-only PDFs of the same methodology are noted there. Extra CLIs install via `--install-tools`.
 
 ---
 
@@ -110,7 +114,7 @@ PYTHONPATH=. python recon/main.py --no-auto-tools -d example.com --scan full
 
 ## Configuration
 
-**You do not need a config file** for a normal run: built-in defaults live in `recon/core/defaults.py` (`crtsh`, `subfinder`, `waybackurls` → `httpx_scanner`, `wafw00f_scanner`, `nuclei_scanner`).
+**You do not need a config file** for a normal run: built-in defaults live in `recon/core/defaults.py` (full discovery list, full scanner list, collection on, JS analysis on).
 
 Configuration is merged in this order (later wins):
 
@@ -132,7 +136,7 @@ Top-level and nested keys match the dataclasses in `recon/core/config_loader.py`
 | `bootstrap` | `auto_install`: if `true`, missing CLIs required by enabled plugins/providers are installed after a preflight check |
 | `tools` | Map logical names to binaries (absolute path or name on `PATH`) |
 | `discovery` | `enabled`, `expand_subdomains`, `providers`, `timeout_seconds`, `wordlist`, `resolvers` |
-| `scanning` | `enabled`, `plugins`, `parallel_workers`, `rate_limit_per_second`, `timeout_seconds`, `skip_duplicate_targets`, `ffuf_wordlist`, `secretfinder_script`, `wafw00f_aggressive` |
+| `scanning` | `enabled`, `plugins`, `parallel_workers`, `rate_limit_per_second`, `timeout_seconds`, `skip_duplicate_targets`, **`live_hosts_only`** (default `true`), `ffuf_wordlist`, **`vhost_ffuf_*`**, **`naabu_top_ports`**, **`nmap_top_ports`**, **`nmap_scripts`**, **`nmap_scan_timeout_seconds`**, `secretfinder_script`, `wafw00f_aggressive` |
 | `alerts` | `webhook_url`, `min_severity`, `batch_summaries`, `deduplicate` |
 | `execution` | `mode` (`sequential` \| `async`), `max_retries`, `retry_backoff_seconds` |
 | `storage` | `output_dir` (relative to **current working directory** unless absolute), `backend` (reserved; JSON implemented) |
@@ -153,6 +157,7 @@ Top-level and nested keys match the dataclasses in `recon/core/config_loader.py`
 | `RECON_SCAN_WORKERS` | `scanning.parallel_workers` |
 | `RECON_EXECUTION_MODE` | `execution.mode` |
 | `RECON_OUTPUT_DIR` | `storage.output_dir` |
+| `GITHUB_TOKEN` | (not mapped into config) | Required by **`github_subdomains`** discovery when not using a `.tokens` file; standard GitHub PAT for [github-subdomains](https://github.com/gwen001/github-subdomains) |
 
 ---
 
@@ -162,7 +167,7 @@ Top-level and nested keys match the dataclasses in `recon/core/config_loader.py`
 2. **Bootstrap** (optional): prepend `~/.local/bin` and `$(go env GOPATH)/bin` to `PATH`; preflight log; install missing tools.  
 3. **Discovery**: collect `Asset` records (hosts, metadata, source).  
 4. **Analysis**: deduplicate, assign priority and tags.  
-5. **Scanning**: for each enabled scanner plugin and asset (subject to rate limits and duplicate fingerprints), run → parse → normalize → `Finding` list.  
+5. **Scanning**: for each asset (subject to rate limits and duplicate fingerprints), run → parse → normalize → `Finding` list. By default **`live_hosts_only`** is **`false`**, so **naabu**, **nmap**, **nuclei**, and other plugins run on **every** discovered asset (still subject to rate limits). Set **`live_hosts_only`: `true`** to run **httpx on all assets first** and restrict other plugins to **httpx-live** hosts only.  
 6. **Storage**: write JSON under `storage.output_dir`.  
 7. **Alerts**: POST webhook for findings at or above `min_severity` (if URL set).
 
@@ -172,7 +177,7 @@ Retries apply per stage in the engine (`execution.max_retries`).
 
 ## Discovery providers
 
-Configured under `discovery.providers` (list). **If omitted**, defaults are **`crtsh`**, **`subfinder`**, **`waybackurls`**. Multiple entries are merged by `CompositeDiscoveryProvider` and deduplicated; the apex domain is injected if missing.
+Configured under `discovery.providers` (list). **If omitted**, defaults are the full list in `recon/core/defaults.py` (**crtsh**, **subfinder**, **waybackurls**, **assetfinder**, **amass_passive**, **github_subdomains**, **shuffledns**, **massdns**). **shuffledns** only emits hosts when **`discovery.wordlist`** and **`discovery.resolvers`** are set. Multiple entries are merged by `CompositeDiscoveryProvider` and deduplicated; the apex domain is injected if missing.
 
 | Provider name | External dependency | Notes |
 |-----------------|---------------------|--------|
@@ -183,41 +188,67 @@ Configured under `discovery.providers` (list). **If omitted**, defaults are **`c
 | `crtsh`, `crt.sh`, `crt_sh` | None | Certificate Transparency (HTTPS API) |
 | `waybackurls`, `wayback` | `waybackurls` | Historical URLs → hostnames under scope |
 | `shuffledns`, `shuffle_dns` | `shuffledns` | Requires `discovery.wordlist` and `discovery.resolvers` |
+| `github_subdomains`, `github-subdomains` | `github-subdomains` | GitHub code search for hostnames ([gwen001/github-subdomains](https://github.com/gwen001/github-subdomains)); set **`GITHUB_TOKEN`** or a `.tokens` file per upstream docs |
 | `massdns` | — | Stub (no automatic install) |
 
 ---
 
 ## Scanner plugins
 
-Configured under `scanning.plugins` (list). **If omitted**, defaults are **`httpx_scanner`**, **`wafw00f_scanner`**, **`nuclei_scanner`**. Registered in `recon/plugins/registry.py`.
+Configured under `scanning.plugins` (list). **If omitted**, defaults are **all** built-in scanners in `recon/core/defaults.py` (including **naabu**, **nmap**, **ffuf** with bundled `recon/data/ffuf-quick.txt`, **vhost_ffuf**, **subjack**, **subzy**, **whatweb**, **wappalyzer**, **secretfinder**). Registered in `recon/plugins/registry.py`.
 
 | Plugin | Dependency | Notes |
 |--------|------------|--------|
 | `mock_scanner` | None | Synthetic findings for pipeline tests |
-| `httpx_scanner` | `httpx` | HTTP(S) probe; tech/title in evidence |
+| `httpx_scanner` | [ProjectDiscovery `httpx`](https://github.com/projectdiscovery/httpx) (Go) | HTTP(S) probe via stdin + `-json`; not Encode/python `httpx` |
 | `nuclei_scanner` | `nuclei` | JSONL output per URL |
+| `naabu_scanner` | `naabu` | **TCP port discovery** on each (live) host: `-host`, `-top-ports` ← `scanning.naabu_top_ports`, `-json`. Emits `open_tcp_port` findings. **Authorized scans only.** |
+| `nmap_scanner` | `nmap` | **Service/version** (`-Pn -sV --top-ports` ← `scanning.nmap_top_ports`, `-oG -`). Optional `scanning.nmap_scripts` → `--script=…` for NSE (e.g. vuln checks where allowed). Emits `exposed_service` for CVE/template follow-up. Timeout: `nmap_scan_timeout_seconds`. |
 | `wafw00f_scanner` | `wafw00f` | WAF detection; optional `scanning.wafw00f_aggressive` |
 | `subjack_scanner` | `subjack` | Subdomain takeover checks |
 | `subzy_scanner` | `subzy` | Subdomain takeover checks |
-| `ffuf_scanner` | `ffuf` | Requires `scanning.ffuf_wordlist` path |
+| `ffuf_scanner` | `ffuf` | Path fuzz: requires `scanning.ffuf_wordlist` |
+| `vhost_ffuf_scanner` | `ffuf` | **Apex only:** one run per pipeline against the **root domain** (`--domain`), not each subdomain. [Vhost discovery](https://github.com/ffuf/ffuf#virtual-host-discovery-without-dns-records): `https://<IP>/` + `Host: FUZZ`. Default wordlist `recon/data/wl-vhost.txt` ([Avileox gist](https://gist.github.com/Avileox/941f5eb742bad690d04c16b78ac41b57)); `%s` → apex. Optional `vhost_ffuf_filter_size` / `vhost_ffuf_autocalibrate`. With `live_hosts_only`, other scanners still use live subdomains; vhost always targets the apex asset. |
 | `secretfinder_scanner` | Python + script | Set `scanning.secretfinder_script` |
 
 Exact CLI flags live in `recon/plugins/tool_scanners.py` and may need tuning for your tool versions.
+
+**`scanning.live_hosts_only`** (default **`false`**): **every plugin × every asset** (unless duplicate fingerprints skip work). Set to **`true`** to reduce noise: the engine runs **httpx** on all assets first (from your plugin list or **implicitly** if you omitted `httpx_scanner` but listed other web scanners), then **naabu**, **nmap**, **nuclei**, etc. only on **httpx-live** hosts (≥1 JSON line). If httpx cannot be loaded from the registry, a warning is logged and non-httpx scanners fall back to all assets.
+
+### Official CLI references
+
+| Tool | Documentation |
+|------|----------------|
+| ProjectDiscovery httpx | [Running](https://docs.projectdiscovery.io/tools/httpx/running), [GitHub](https://github.com/projectdiscovery/httpx) |
+| Nuclei | [Running](https://docs.projectdiscovery.io/tools/nuclei/running), [input formats](https://docs.projectdiscovery.io/opensource/nuclei/input-formats) |
+| Subfinder | [ProjectDiscovery docs](https://docs.projectdiscovery.io/tools/subfinder/running) |
+| wafw00f | [EnableSecurity/wafw00f](https://github.com/EnableSecurity/wafw00f) |
+| FFUF | [ffuf project](https://github.com/ffuf/ffuf) — [Virtual host discovery](https://github.com/ffuf/ffuf#virtual-host-discovery-without-dns-records) (`-H "Host: FUZZ"`, `-fs` / `-ac`) |
+| GAU | [lc/gau](https://github.com/lc/gau) |
+| Katana | [projectdiscovery/katana](https://github.com/projectdiscovery/katana) |
+| GoSpider | [jaeles-project/gospider](https://github.com/jaeles-project/gospider) |
+| dnsx | [projectdiscovery/dnsx](https://github.com/projectdiscovery/dnsx) |
+| Amass | [OWASP Amass](https://github.com/owasp-amass/amass) |
+| naabu | [projectdiscovery/naabu](https://github.com/projectdiscovery/naabu) (port scan; use on **authorized** targets only) |
+| TBHM (methodology text) | [jhaddix/tbhm](https://github.com/jhaddix/tbhm) |
+
+See [`recon/docs/METHODOLOGY.md`](recon/docs/METHODOLOGY.md) and [`recon/docs/TBHM.md`](recon/docs/TBHM.md) for OSINT and manual-only items (Shodan, Burp, Semgrep usage pattern, Clear-Sky-style workflows, etc.).
 
 ---
 
 ## External tools and bootstrap
 
-Supported install recipes are declared in `recon/bootstrap/definitions.py`.
+Supported install recipes are declared in `recon/bootstrap/definitions.py` (core pipeline tools plus [methodology extras](recon/docs/METHODOLOGY.md)).
 
 | Method | When |
 |--------|------|
 | **`go install …@latest`** | Most recon/scanner binaries |
 | **`python -m pip install`** | e.g. `wafw00f` |
-| **`apt-get install`** | Debian/Ubuntu family only (detected via `/etc/os-release`); e.g. `nmap`. Requires **root** or **passwordless `sudo -n`** for non-interactive installs |
+| **`apt-get install`** | Debian/Ubuntu family only (detected via `/etc/os-release`); e.g. `nmap`, **`libpcap-dev`** (build dep for **naabu**). Requires **root** or **passwordless `sudo -n`** for non-interactive installs |
 
 Behavior:
 
+- **Order**: when a tool lists **`apt_packages`**, those run **before** `pip` / `go install` so compile dependencies (e.g. naabu + libpcap) resolve on Debian.
 - **Preflight**: before any install, each required tool is checked (`PATH` or `tools.<key>` path). Logs use `[OK]` / `[MISSING]`.
 - **PATH**: `~/.local/bin` and `GOPATH/bin` are prepended for the current process so new installs are visible immediately.
 
@@ -266,6 +297,10 @@ AutoRecon-Framework/
 └── recon/
     ├── main.py                 # CLI entry
     ├── __init__.py
+    ├── docs/
+    │   ├── METHODOLOGY.md      # Checklist-style recon crosswalk
+    │   └── TBHM.md             # Jason Haddix TBHM ↔ pipeline (jhaddix/tbhm)
+    ├── data/                   # Bundled wordlists (e.g. wl-vhost.txt)
     ├── config/                 # Example YAML/JSON
     ├── bootstrap/              # Tool specs + Debian-oriented installer
     ├── core/                   # Engine, config, logger, scheduler, discovery factory
@@ -299,6 +334,29 @@ AutoRecon-Framework/
 
 ---
 
+## Methodology alignment (bug bounty recon)
+
+The framework is designed to sit in a larger recon practice (apex discovery → subdomains → live hosts → scanning → manual testing). For a **full crosswalk** between:
+
+- [R-s0n — DEF CON 32 Bug Bounty Village *recon-methodology.md*](https://github.com/R-s0n/bug-bounty-village-defcon32-workshop/blob/main/recon-methodology.md)
+- [Infosec Writeups — *Recon to Master: The Complete Bug Bounty Checklist*](https://infosecwriteups.com/recon-to-master-the-complete-bug-bounty-checklist-95b80ea55ff0)
+
+and **this repo** (what runs in the pipeline vs what `--install-tools` adds vs what stays manual/OSINT), see:
+
+**[`recon/docs/METHODOLOGY.md`](recon/docs/METHODOLOGY.md)**
+
+`--install-tools` installs **core** tools (subfinder, httpx, nuclei, etc.) plus **methodology-aligned extras** declared in `recon/bootstrap/definitions.py` (e.g. **github-subdomains**, **naabu**, **gau**, **katana**, **gospider**, **httprobe**, **dnsx**, **arjun**, **sublist3r**, **semgrep**, **cewl** on Debian). Extras other than enabled discovery providers do not run automatically until you add them to `discovery.providers` / `scanning.plugins` or call them from scripts.
+
+---
+
+## The Bug Hunter’s Methodology (TBHM)
+
+Jason Haddix’s **The Bug Hunter’s Methodology** is maintained at **[github.com/jhaddix/tbhm](https://github.com/jhaddix/tbhm)**. This repo includes **[`recon/docs/TBHM.md`](recon/docs/TBHM.md)**, which maps TBHM themes (Discovery, port scanning, mapping, takeover checks, wide scanning) to AutoRecon providers, scanners, and bootstrap binaries.
+
+**Note:** “TBHM Live” PDF one-pagers are often **image-based**; if text extraction is empty, use the GitHub repo and `TBHM.md` as the source of truth.
+
+---
+
 ## Troubleshooting
 
 | Issue | What to check |
@@ -309,6 +367,7 @@ AutoRecon-Framework/
 | `apt-get` install skipped | Run as root (e.g. container) or configure passwordless `sudo -n` for `apt-get` |
 | Empty findings | Duplicate fingerprints in `scan_fingerprints.json`, or scanners not in `scanning.plugins` |
 | Wrong CLI behavior | Compare your tool version with arguments in `recon/plugins/tool_scanners.py` |
+| **`httpx`: `No such option: -u` / `Usage: httpx [OPTIONS] URL`** | Wrong binary: often **Encode/python `httpx`** (`pip install httpx`) shadows [ProjectDiscovery httpx](https://github.com/projectdiscovery/httpx). Run `go install github.com/projectdiscovery/httpx/cmd/httpx@latest` and set `tools.httpx` to `$(go env GOPATH)/bin/httpx`, or use `--install-tools`. The scanner feeds the URL on **stdin** and expects PD JSON lines. |
 
 ---
 

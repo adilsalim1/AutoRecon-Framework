@@ -39,12 +39,36 @@ class ScanEngine:
         self._record_fp = record_fingerprint
         self._extra_context = dict(extra_context or {})
 
+    def _assets_for_plugin(self, plugin: ScannerPlugin, assets: list[Asset]) -> list[Asset]:
+        """vhost_ffuf_scanner uses only apex/root targets from context (see PipelineEngine)."""
+        if plugin.name != "vhost_ffuf_scanner":
+            return assets
+        sub = self._extra_context.get("vhost_scan_assets")
+        if isinstance(sub, list) and sub:
+            return list(sub)
+        return assets
+
     def _context(self, domain: str) -> ScanContext:
+        meta = {
+            k: v
+            for k, v in self._extra_context.items()
+            if k != "vhost_scan_assets"
+        }
         return ScanContext(
             domain=domain,
             rate_limit_per_second=self._rate,
-            metadata=dict(self._extra_context),
+            metadata=meta,
         )
+
+    def _host_under_waf(self, asset: Asset) -> bool:
+        pr = self._extra_context.get("pipeline_runtime")
+        if not isinstance(pr, dict):
+            return False
+        wmap = pr.get("waf_by_host")
+        if not isinstance(wmap, dict):
+            return False
+        key = asset.identifier.lower().strip().rstrip(".")
+        return key in wmap
 
     def _execute_scan(
         self,
@@ -60,6 +84,27 @@ class ScanEngine:
                 asset.identifier,
             )
             return [], None, fp
+        if self._extra_context.get("waf_skip_aggressive", True):
+            tier = getattr(plugin, "scan_tier", "safe")
+            if tier == "aggressive" and self._host_under_waf(asset):
+                wmap = self._extra_context.get("pipeline_runtime") or {}
+                wv = ""
+                if isinstance(wmap, dict):
+                    inner = wmap.get("waf_by_host")
+                    if isinstance(inner, dict):
+                        wv = str(
+                            inner.get(
+                                asset.identifier.lower().strip().rstrip("."),
+                                "",
+                            )
+                        )
+                log.info(
+                    "scan skip aggressive %s → %s (WAF: %s)",
+                    plugin.name,
+                    asset.identifier,
+                    wv or "unknown",
+                )
+                return [], None, None
         log.info(
             "scan start %s → %s",
             plugin.name,
@@ -104,13 +149,81 @@ class ScanEngine:
         records: list[dict[str, Any]] = []
         limiter = RateLimiter(self._rate)
         for plugin in self._plugins:
-            for asset in assets:
+            for asset in self._assets_for_plugin(plugin, assets):
                 limiter.acquire()
                 fnds, raw, fp = self._execute_scan(plugin, asset, domain)
                 findings.extend(fnds)
                 if raw is not None:
                     records.append(self._scan_record(plugin.name, asset, raw, fp))
         return findings, records
+
+    def httpx_probe_partition(
+        self,
+        domain: str,
+        assets: list[Asset],
+        httpx_plugin: ScannerPlugin,
+        *,
+        parallel: bool,
+    ) -> tuple[list[Finding], list[dict[str, Any]], list[Asset]]:
+        """
+        Run httpx_scanner on every asset; return findings/records plus assets considered *live*
+        (≥1 JSON line from httpx, or httpx skipped as duplicate fingerprint).
+        """
+        findings: list[Finding] = []
+        records: list[dict[str, Any]] = []
+        live: list[Asset] = []
+
+        def _consider_live(raw: RawScanResult | None) -> bool:
+            if raw is None:
+                return True
+            if not raw.success:
+                return False
+            lines = raw.raw_payload.get("lines") if raw.raw_payload else None
+            return bool(lines)
+
+        if parallel and self._parallel_workers > 1:
+            limiter = RateLimiter(self._rate)
+
+            def _work(asset: Asset) -> tuple[list[Finding], RawScanResult | None, str | None, Asset]:
+                limiter.acquire()
+                return (*self._execute_scan(httpx_plugin, asset, domain), asset)
+
+            with ThreadPoolExecutor(max_workers=self._parallel_workers) as pool:
+                futures = {pool.submit(_work, a): a for a in assets}
+                for fut in as_completed(futures):
+                    try:
+                        fnds, raw, fp, asset = fut.result()
+                    except Exception:
+                        log.exception(
+                            "parallel httpx probe failed for %s",
+                            futures[fut].identifier,
+                        )
+                        continue
+                    findings.extend(fnds)
+                    if raw is not None:
+                        records.append(self._scan_record(httpx_plugin.name, asset, raw, fp))
+                    if _consider_live(raw):
+                        live.append(asset)
+        else:
+            limiter = RateLimiter(self._rate)
+            for asset in assets:
+                limiter.acquire()
+                fnds, raw, fp = self._execute_scan(httpx_plugin, asset, domain)
+                findings.extend(fnds)
+                if raw is not None:
+                    records.append(self._scan_record(httpx_plugin.name, asset, raw, fp))
+                if _consider_live(raw):
+                    live.append(asset)
+
+        seen: set[str] = set()
+        live_dedup: list[Asset] = []
+        for a in live:
+            k = a.identifier.lower().strip().rstrip(".")
+            if k in seen:
+                continue
+            seen.add(k)
+            live_dedup.append(a)
+        return findings, records, live_dedup
 
     def execute_parallel(
         self,
@@ -121,7 +234,7 @@ class ScanEngine:
         records: list[dict[str, Any]] = []
         limiter = RateLimiter(self._rate)
         tasks: list[tuple[ScannerPlugin, Asset]] = [
-            (p, a) for p in self._plugins for a in assets
+            (p, a) for p in self._plugins for a in self._assets_for_plugin(p, assets)
         ]
 
         def _work(p: ScannerPlugin, a: Asset) -> tuple[list[Finding], RawScanResult | None, str | None]:
@@ -162,6 +275,16 @@ class ScanEngine:
                     asset.identifier,
                 )
                 return
+            if self._extra_context.get("waf_skip_aggressive", True):
+                if getattr(plugin, "scan_tier", "safe") == "aggressive" and self._host_under_waf(
+                    asset
+                ):
+                    log.info(
+                        "scan skip aggressive %s → %s (WAF)",
+                        plugin.name,
+                        asset.identifier,
+                    )
+                    return
             log.info("scan start %s → %s", plugin.name, asset.identifier)
             async with rl:
                 raw = await plugin.run_async([asset], self._context(domain))
@@ -196,7 +319,9 @@ class ScanEngine:
                 findings.extend(normalized)
                 records.append(self._scan_record(plugin.name, asset, raw, fp))
 
-        coros = [_one(p, a) for p in self._plugins for a in assets]
+        coros = [
+            _one(p, a) for p in self._plugins for a in self._assets_for_plugin(p, assets)
+        ]
         await gather_limited(coros, self._parallel_workers)
         return findings, records
 

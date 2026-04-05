@@ -70,6 +70,10 @@ class JsonStorageBackend(StorageBackend):
             encoding="utf-8",
         )
 
+    def save_json_artifact(self, run_id: str, name: str, data: Any) -> None:
+        path = self._root / f"{name}_{run_id}.json"
+        path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+
     def append_scan_record(self, run_id: str, record: dict[str, Any]) -> None:
         path = self._root / f"scans_{run_id}.jsonl"
         line = json.dumps(record, default=str)

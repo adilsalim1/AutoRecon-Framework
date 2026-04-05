@@ -62,6 +62,11 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         go_package="github.com/OWASP/Amass/v4/cmd/amass@latest",
     ),
     ToolSpec(
+        key="github_subdomains",
+        check_names=("github-subdomains",),
+        go_package="github.com/gwen001/github-subdomains@latest",
+    ),
+    ToolSpec(
         key="subjack",
         check_names=("subjack",),
         go_package="github.com/haccer/subjack@latest",
@@ -81,6 +86,73 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         check_names=("nmap",),
         apt_packages=("nmap",),
     ),
+    ToolSpec(
+        key="naabu",
+        check_names=("naabu",),
+        apt_packages=("libpcap-dev",),
+        go_package="github.com/projectdiscovery/naabu/v2/cmd/naabu@latest",
+    ),
+    # --- Methodology-aligned extras (R-s0n recon + bug-bounty checklists): install via
+    # `python recon/main.py --install-tools` — not all have pipeline plugins yet; see recon/docs/METHODOLOGY.md
+    ToolSpec(
+        key="gau",
+        check_names=("gau",),
+        go_package="github.com/lc/gau/v2/cmd/gau@latest",
+    ),
+    ToolSpec(
+        key="katana",
+        check_names=("katana",),
+        go_package="github.com/projectdiscovery/katana/cmd/katana@latest",
+    ),
+    ToolSpec(
+        key="hakrawler",
+        check_names=("hakrawler",),
+        go_package="github.com/hakluke/hakrawler@latest",
+    ),
+    ToolSpec(
+        key="whatweb",
+        check_names=("whatweb",),
+        apt_packages=("whatweb",),
+    ),
+    ToolSpec(
+        key="wappalyzer",
+        check_names=("wappalyzer",),
+    ),
+    ToolSpec(
+        key="gospider",
+        check_names=("gospider",),
+        go_package="github.com/jaeles-project/gospider@latest",
+    ),
+    ToolSpec(
+        key="httprobe",
+        check_names=("httprobe",),
+        go_package="github.com/tomnomnom/httprobe@latest",
+    ),
+    ToolSpec(
+        key="dnsx",
+        check_names=("dnsx",),
+        go_package="github.com/projectdiscovery/dnsx/cmd/dnsx@latest",
+    ),
+    ToolSpec(
+        key="arjun",
+        check_names=("arjun",),
+        pip_package="arjun>=2.2.1",
+    ),
+    ToolSpec(
+        key="sublist3r",
+        check_names=("sublist3r",),
+        pip_package="Sublist3r>=1.0",
+    ),
+    ToolSpec(
+        key="semgrep",
+        check_names=("semgrep",),
+        pip_package="semgrep>=1.40.0",
+    ),
+    ToolSpec(
+        key="cewl",
+        check_names=("cewl",),
+        apt_packages=("cewl",),
+    ),
 )
 
 _BY_KEY: dict[str, ToolSpec] = {s.key: s for s in TOOL_SPECS}
@@ -97,10 +169,22 @@ DISCOVERY_PROVIDER_TOOLS: dict[str, frozenset[str]] = {
     "crt_sh": frozenset(),
     "waybackurls": frozenset({"waybackurls"}),
     "wayback": frozenset({"waybackurls"}),
+    "github_subdomains": frozenset({"github_subdomains"}),
+    "github-subdomains": frozenset({"github_subdomains"}),
+    "githubsubdomains": frozenset({"github_subdomains"}),
     "shuffledns": frozenset({"shuffledns"}),
     "shuffle_dns": frozenset({"shuffledns"}),
     "massdns": frozenset(),
 }
+
+COLLECTION_PROVIDER_TOOLS: dict[str, frozenset[str]] = {
+    "gau": frozenset({"gau"}),
+    "waybackurls": frozenset({"waybackurls"}),
+    "wayback": frozenset({"waybackurls"}),
+    "katana": frozenset({"katana"}),
+    "hakrawler": frozenset({"hakrawler"}),
+}
+
 
 SCANNER_PLUGIN_TOOLS: dict[str, frozenset[str]] = {
     "mock_scanner": frozenset(),
@@ -109,8 +193,13 @@ SCANNER_PLUGIN_TOOLS: dict[str, frozenset[str]] = {
     "subjack_scanner": frozenset({"subjack"}),
     "subzy_scanner": frozenset({"subzy"}),
     "ffuf_scanner": frozenset({"ffuf"}),
+    "vhost_ffuf_scanner": frozenset({"ffuf"}),
     "wafw00f_scanner": frozenset({"wafw00f"}),
+    "naabu_scanner": frozenset({"naabu"}),
+    "nmap_scanner": frozenset({"nmap"}),
     "secretfinder_scanner": frozenset(),
+    "whatweb_scanner": frozenset({"whatweb"}),
+    "wappalyzer_scanner": frozenset({"wappalyzer"}),
 }
 
 
@@ -118,10 +207,16 @@ def spec_for_key(key: str) -> ToolSpec | None:
     return _BY_KEY.get(key)
 
 
-def required_tool_keys_for_config(discovery_providers: list[str], scanner_plugins: list[str]) -> frozenset[str]:
+def required_tool_keys_for_config(
+    discovery_providers: list[str],
+    scanner_plugins: list[str],
+    collection_providers: list[str] | None = None,
+) -> frozenset[str]:
     keys: set[str] = set()
     for p in discovery_providers:
         keys |= set(DISCOVERY_PROVIDER_TOOLS.get(p.strip().lower(), frozenset()))
     for p in scanner_plugins:
         keys |= set(SCANNER_PLUGIN_TOOLS.get(p.strip().lower(), frozenset()))
+    for p in collection_providers or []:
+        keys |= set(COLLECTION_PROVIDER_TOOLS.get(p.strip().lower(), frozenset()))
     return frozenset(keys)
