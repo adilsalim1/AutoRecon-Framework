@@ -298,6 +298,7 @@ AutoRecon-Framework/
 |-------|----------------|
 | `ModuleNotFoundError: yaml` | Install PyYAML or use a `.json` config |
 | Tool not found after `go install` | Ensure `$(go env GOPATH)/bin` is on `PATH` (the framework prepends it in-process) |
+| **`go install failed: go not found`** | The Go toolchain is missing. On Debian/Kali the framework tries **`apt install golang-go`** automatically if it can run `apt-get` (root or passwordless `sudo`). Otherwise run: `sudo apt install golang-go` or install Go from [go.dev/dl](https://go.dev/dl/). |
 | `apt-get` install skipped | Run as root (e.g. container) or configure passwordless `sudo -n` for `apt-get` |
 | Empty findings | Duplicate fingerprints in `scan_fingerprints.json`, or scanners not in `scanning.plugins` |
 | Wrong CLI behavior | Compare your tool version with arguments in `recon/plugins/tool_scanners.py` |

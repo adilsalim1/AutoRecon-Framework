@@ -73,7 +73,10 @@ def _is_debian_family() -> bool:
             data[k.strip()] = v.strip().strip('"')
     did = data.get("ID", "").lower()
     like = data.get("ID_LIKE", "").lower()
-    return did in ("debian", "ubuntu", "linuxmint", "pop") or "debian" in like
+    return (
+        did in ("debian", "ubuntu", "linuxmint", "pop", "kali")
+        or "debian" in like
+    )
 
 
 def _which_any(names: tuple[str, ...]) -> str | None:
@@ -183,9 +186,42 @@ def _have_go() -> bool:
     return shutil.which("go") is not None
 
 
-def _go_install(pkg: str, timeout: int = 900) -> tuple[bool, str]:
+def _ensure_go_compiler() -> bool:
+    """
+    Ensure the `go` command exists. On Debian/Kali/Ubuntu, try apt install golang-go once.
+    Requires root or passwordless sudo (same as other apt bootstrap steps).
+    """
+    if _have_go():
+        return True
+    if not _is_debian_family():
+        log.warning(
+            "The 'go' command is not installed. Many tools need it (go install …). "
+            "Install from https://go.dev/dl/ or use your OS package manager."
+        )
+        return False
+    log.info(
+        "Go compiler not found; installing Debian package golang-go (needed for go install …)"
+    )
+    ok, msg = _apt_install(("golang-go",), timeout=900)
+    if not ok:
+        log.warning("apt install golang-go failed: %s", msg)
+        return False
     if not _have_go():
-        return False, "go not found; on Debian: apt install golang-go (or install from golang.org)"
+        log.warning(
+            "golang-go finished but `go` is still not on PATH; try: hash -r or a new shell"
+        )
+        return False
+    log.info("Go is available: %s", shutil.which("go"))
+    return True
+
+
+def _go_install(pkg: str, timeout: int = 900) -> tuple[bool, str]:
+    if not _ensure_go_compiler():
+        return (
+            False,
+            "go not available after bootstrap; on Debian/Kali: sudo apt install golang-go "
+            "(or run this framework as root / with passwordless sudo for apt)",
+        )
     prepend_go_bin_to_path()
     code, out = _run(["go", "install", "-v", pkg], timeout=timeout)
     prepend_go_bin_to_path()
