@@ -403,7 +403,6 @@ def format_summary_payload(
     *,
     total_assets: int,
     findings: list[Finding],
-    channel_label: str = "ASSETS",
 ) -> dict[str, Any]:
     by_sev: dict[str, int] = {}
     for f in findings:
@@ -428,6 +427,6 @@ def format_summary_payload(
         "color": 0x1ABC9C,
     }
     return format_webhook_with_embeds(
-        f"[{channel_label}] `{domain}` complete · `{len(findings)}` finding(s)",
+        f"[SUMMARY] `{domain}` complete · `{len(findings)}` finding(s)",
         [embed],
     )

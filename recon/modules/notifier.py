@@ -533,10 +533,10 @@ class DiscordMultiChannelNotifier:
             return
         if self.broadcast_file_exports_all_channels:
             targets = ALL_DISCORD_CHANNEL_KEYS
-        elif self._url(CH_ASSETS):
-            targets = (CH_ASSETS,)
         elif self._url(CH_SUMMARY):
             targets = (CH_SUMMARY,)
+        elif self._url(CH_ASSETS):
+            targets = (CH_ASSETS,)
         else:
             return
         files = build_final_scan_export_files(findings, assets, run_id, domain)
@@ -629,23 +629,20 @@ class DiscordMultiChannelNotifier:
         total_assets: int,
         findings: list[Finding],
     ) -> None:
-        # Pipeline summary → assets-discovered webhook when set; else legacy SUMMARY.
-        ch = CH_ASSETS if self._url(CH_ASSETS) else CH_SUMMARY
-        if not self._url(ch):
+        """Pipeline summary embed → dedicated `DISCORD_WEBHOOK_SUMMARY` channel."""
+        if not self._url(CH_SUMMARY):
             return
-        dk = f"{ch}:pipeline_summary:{run_id}"
-        if self._dedupe(ch, dk):
+        dk = f"{CH_SUMMARY}:pipeline_summary:{run_id}"
+        if self._dedupe(CH_SUMMARY, dk):
             return
-        label = "ASSETS" if ch == CH_ASSETS else "SUMMARY"
         pl = format_summary_payload(
             report,
             run_id,
             domain,
             total_assets=total_assets,
             findings=findings,
-            channel_label=label,
         )
-        self._post_now(ch, pl)
+        self._post_now(CH_SUMMARY, pl)
 
     def ingest_scan_finding(self, finding: Finding, run_id: str, domain: str) -> None:
         """
