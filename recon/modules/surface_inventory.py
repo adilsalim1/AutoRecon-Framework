@@ -109,21 +109,20 @@ def httpx_target_lines(
     *,
     max_urls: int,
 ) -> list[str]:
-    """Build newline payloads for ProjectDiscovery httpx (scheme-full URLs)."""
+    """
+    One HTTPS root URL per discovered host only (``https://host/``).
+    Does not probe each harvested path/URL — tech / live checks are domain-level.
+    ``max_urls`` caps how many hosts are probed (0 = all hosts).
+    """
     seen: set[str] = set()
     out: list[str] = []
     for d in inventory.get("domains") or []:
+        if max_urls > 0 and len(out) >= max_urls:
+            break
         u = f"https://{normalize_host(d)}/"
         if u not in seen:
             seen.add(u)
             out.append(u)
-    cap = max_urls if max_urls > 0 else len(inventory.get("urls") or [])
-    for raw in (inventory.get("urls") or [])[:cap]:
-        raw = raw.strip()
-        if not raw.startswith("http") or raw in seen:
-            continue
-        seen.add(raw)
-        out.append(raw)
     return out
 
 

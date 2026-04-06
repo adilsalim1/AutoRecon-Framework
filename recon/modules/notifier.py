@@ -111,7 +111,8 @@ class WebhookNotifier:
         if self.deduplicate:
             fresh: list[Finding] = []
             for f in candidates:
-                k = f.dedupe_key()
+                ch = route_finding_channel(f)
+                k = f"{ch}:{f.discord_notify_dedupe_key(ch)}"
                 if k in self._sent_keys:
                     continue
                 self._sent_keys.add(k)
@@ -294,7 +295,7 @@ class DiscordMultiChannelNotifier:
     http_timeout_seconds: float = 35.0
     staging_batch_max: int = 30
     attach_full_file_exports: bool = True
-    broadcast_file_exports_all_channels: bool = True
+    broadcast_file_exports_all_channels: bool = False
     _seen: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set), repr=False
     )
@@ -445,7 +446,7 @@ class DiscordMultiChannelNotifier:
         if not url:
             return
         key = (
-            f"{CH_TECH}:{finding.dedupe_key()}"
+            f"{CH_TECH}:{finding.discord_notify_dedupe_key(CH_TECH)}"
             if finding
             else f"{CH_TECH}:asset:{asset.stable_id() if asset else 'none'}"
         )
@@ -651,7 +652,7 @@ class DiscordMultiChannelNotifier:
         ch = route_finding_channel(finding)
         if not self._eligible_finding(finding, ch):
             return
-        dk = f"{ch}:{finding.dedupe_key()}"
+        dk = f"{ch}:{finding.discord_notify_dedupe_key(ch)}"
         if self._dedupe(ch, dk):
             return
         emb = format_finding_embed(finding, run_id, domain)

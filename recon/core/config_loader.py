@@ -165,7 +165,7 @@ class ScanningConfig:
     url_secret_scan_max: int = 500
     """Regex secret scan across collected URL strings (lightweight)."""
     max_httpx_targets: int = 4000
-    """Max collected URLs to include in batched httpx (after per-host https:// roots). 0 = no limit."""
+    """Max hosts to include in batched httpx (one ``https://host/`` per domain). 0 = no limit."""
     js_snitch_enabled: bool = True
     """Download collected JS URLs and run TruffleHog + Semgrep (js-snitch-style); needs binaries on PATH."""
     js_snitch_max_urls: int = 500
@@ -198,8 +198,8 @@ class AlertsConfig:
     discord_staging_batch_max: int = 30
     discord_attach_full_file_exports: bool = True
     """If True, post full domains/URLs/paths and findings as file attachments instead of truncating in embeds."""
-    discord_broadcast_file_exports_all_channels: bool = True
-    """If True, send the same attachment bundles to every configured Discord webhook (not only ASSETS / SUMMARY)."""
+    discord_broadcast_file_exports_all_channels: bool = False
+    """If True, duplicate inventory/export attachments to every webhook. Default False: ASSETS gets URL/path lists; SUMMARY gets run summary + final exports."""
 
 
 @dataclass
@@ -364,7 +364,7 @@ class AppConfig:
                     a.get("discord_attach_full_file_exports", True)
                 ),
                 discord_broadcast_file_exports_all_channels=bool(
-                    a.get("discord_broadcast_file_exports_all_channels", True)
+                    a.get("discord_broadcast_file_exports_all_channels", False)
                 ),
             ),
             execution=ExecutionConfig(

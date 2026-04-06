@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any
 import hashlib
 import json
+from urllib.parse import urlparse
 
 
 class Severity(str, Enum):
@@ -54,6 +55,55 @@ class Finding:
             sort_keys=True,
         )
         return hashlib.sha256(payload.encode()).hexdigest()
+
+    def _httpx_tech_fingerprint_dedupe_key(self) -> str | None:
+        """
+        Same host + same httpx tech evidence → one key (avoids #tech spam for every
+        static URL when the stack is identical).
+        """
+        if (
+            self.vulnerability_type != "live_http_service"
+            or (self.source_scanner or "") != "httpx_scanner"
+        ):
+            return None
+        t = (self.target or "").strip()
+        host = ""
+        if "://" in t:
+            host = (urlparse(t).hostname or "").lower().rstrip(".")
+        else:
+            host = t.split("/")[0].split(":")[0].lower().rstrip(".")
+        if not host:
+            return None
+        ev = self.evidence or {}
+        tech_raw = ev.get("technologies") or ev.get("tech") or []
+        if isinstance(tech_raw, str):
+            tech_raw = [tech_raw]
+        tech_list = sorted(
+            str(x).strip().lower()
+            for x in tech_raw
+            if x is not None and str(x).strip()
+        )
+        server = ev.get("server")
+        srv_norm = (
+            str(server).strip().lower() if server is not None and str(server).strip() else None
+        )
+        fingerprint = {
+            "host": host,
+            "status_code": ev.get("status_code"),
+            "server": srv_norm,
+            "technologies": tech_list,
+            "title": ev.get("title"),
+        }
+        payload = json.dumps(fingerprint, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def discord_notify_dedupe_key(self, channel_key: str) -> str:
+        """Per-channel notification dedupe (e.g. collapse httpx tech by fingerprint on #tech)."""
+        if channel_key == "tech":
+            fp = self._httpx_tech_fingerprint_dedupe_key()
+            if fp is not None:
+                return fp
+        return self.dedupe_key()
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {

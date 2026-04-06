@@ -98,8 +98,8 @@ alerts:
   deduplicate: true
   # Full hosts/URLs/paths + findings as Discord attachments (not truncated samples).
   discord_attach_full_file_exports: true
-  # Post the same file bundles to every configured DISCORD_WEBHOOK_* channel.
-  discord_broadcast_file_exports_all_channels: true
+  # If true, duplicates inventory + final exports to every webhook (noisy). Default: ASSETS + SUMMARY only.
+  discord_broadcast_file_exports_all_channels: false
 
 execution:
   mode: sequential
