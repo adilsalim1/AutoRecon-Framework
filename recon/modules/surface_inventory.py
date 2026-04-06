@@ -35,6 +35,38 @@ def host_from_url(url: str) -> str | None:
     return None
 
 
+def _scope_match_roots(apex: str) -> tuple[str, ...]:
+    """
+    DNS roots for the configured scope: the apex plus, if it is a ``www.`` host,
+    the bare registrable-style parent so sibling subdomains stay in scope.
+    """
+    a = normalize_host(apex)
+    if not a:
+        return ()
+    roots: list[str] = [a]
+    if a.startswith("www.") and len(a) > 4:
+        bare = a[4:]
+        if bare and bare not in roots:
+            roots.append(bare)
+    return tuple(roots)
+
+
+def host_is_under_apex(host: str, apex: str) -> bool:
+    """
+    True if ``host`` is the configured scope or a subdomain of any scope root,
+    excluding third-party hosts (``bit.ly``, ``apps.apple.com``) from URL harvest.
+    """
+    h = normalize_host(host)
+    if not h:
+        return False
+    for a in _scope_match_roots(apex):
+        if not a:
+            continue
+        if h == a or h.endswith("." + a):
+            return True
+    return False
+
+
 def build_surface_inventory(
     domain: str,
     assets: list[Asset],
@@ -52,6 +84,8 @@ def build_surface_inventory(
         n = normalize_host(h)
         if not n or n in seen_hosts:
             return
+        if not host_is_under_apex(n, apex):
+            return
         seen_hosts.add(n)
         domains.append(n)
 
@@ -65,23 +99,19 @@ def build_surface_inventory(
         u = u.strip()
         if not u.startswith("http"):
             continue
+        hh = host_from_url(u)
+        if not hh or not host_is_under_apex(hh, apex):
+            continue
         if u in seen_url:
             continue
         seen_url.add(u)
         urls.append(u)
-        hh = host_from_url(u)
         if hh:
             add_host(hh)
 
     seen_path: set[str] = set()
     endpoint_paths: list[str] = []
-    if collection:
-        for ep in collection.endpoint_paths:
-            e = (ep or "").strip()
-            if not e or e in seen_path:
-                continue
-            seen_path.add(e)
-            endpoint_paths.append(e)
+    # Paths only from in-scope URLs (skip paths implied by external redirect domains).
     for u in urls:
         try:
             p = urlparse(u)
@@ -128,6 +158,7 @@ def httpx_target_lines(
 
 def extend_inventory_with_finding_hosts(inventory: dict, findings: list[Finding]) -> None:
     """Add hostnames inferred from enumeration findings (e.g. vhost, ffuf URLs)."""
+    apex = str(inventory.get("apex") or "").strip()
     hosts = set(inventory.get("domains") or [])
     for f in findings:
         t = (f.target or "").strip()
@@ -135,10 +166,12 @@ def extend_inventory_with_finding_hosts(inventory: dict, findings: list[Finding]
             continue
         if "://" in t:
             hh = host_from_url(t)
-            if hh:
+            if hh and host_is_under_apex(hh, apex):
                 hosts.add(hh)
         elif "." in t and " " not in t:
-            hosts.add(normalize_host(t))
+            n = normalize_host(t)
+            if host_is_under_apex(n, apex):
+                hosts.add(n)
     inv_domains = sorted(hosts)
     inventory["domains"] = inv_domains
     inventory["domains_count"] = len(inv_domains)
