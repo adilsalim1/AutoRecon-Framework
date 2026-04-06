@@ -196,6 +196,10 @@ class AlertsConfig:
     discord_http_retries: int = 3
     discord_http_timeout_seconds: float = 35.0
     discord_staging_batch_max: int = 30
+    discord_attach_full_file_exports: bool = True
+    """If True, post full domains/URLs/paths and findings as file attachments instead of truncating in embeds."""
+    discord_broadcast_file_exports_all_channels: bool = True
+    """If True, send the same attachment bundles to every configured Discord webhook (not only ASSETS / SUMMARY)."""
 
 
 @dataclass
@@ -356,6 +360,12 @@ class AppConfig:
                     a.get("discord_http_timeout_seconds", 35.0)
                 ),
                 discord_staging_batch_max=int(a.get("discord_staging_batch_max", 30)),
+                discord_attach_full_file_exports=bool(
+                    a.get("discord_attach_full_file_exports", True)
+                ),
+                discord_broadcast_file_exports_all_channels=bool(
+                    a.get("discord_broadcast_file_exports_all_channels", True)
+                ),
             ),
             execution=ExecutionConfig(
                 mode=e.get("mode", "sequential"),

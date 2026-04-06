@@ -112,6 +112,8 @@ class PipelineResult:
     assets: list[Asset] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    surface_inventory: dict[str, Any] | None = None
+    """Populated after enumeration + URL harvest when phased scanning builds inventory."""
 
 
 class PipelineEngine:
@@ -480,6 +482,7 @@ class PipelineEngine:
 
         inventory = build_surface_inventory(dom, analyzed, collection_result)
         extend_inventory_with_finding_hosts(inventory, findings)
+        result.surface_inventory = inventory
         pipeline_runtime["surface_inventory"] = {
             "domains_count": inventory.get("domains_count"),
             "urls_count": inventory.get("urls_count"),
@@ -684,6 +687,12 @@ class PipelineEngine:
                     dom,
                     total_assets=len(result.assets),
                     findings=findings,
+                )
+                dn.send_full_run_file_exports(
+                    findings,
+                    result.assets,
+                    run_id,
+                    dom,
                 )
             elif self.config.alerts.webhook_url:
                 min_sev = _parse_severity(self.config.alerts.min_severity)

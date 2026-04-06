@@ -121,6 +121,92 @@ def _consume_lines_up_to_budget(lines: list[str], budget: int) -> tuple[str, lis
     return "\n".join(buf), lines[i:]
 
 
+def _export_filename_prefix(domain: str, run_id: str) -> str:
+    sdom = "".join(c if c.isalnum() or c in "-._" else "_" for c in (domain or ""))[:80]
+    rid = "".join(c if c.isalnum() or c in "-._" else "_" for c in (run_id or ""))[:16]
+    return f"{sdom}_{rid}"
+
+
+def format_surface_inventory_summary_payload(
+    inventory: dict[str, Any],
+    run_id: str,
+    domain: str,
+    *,
+    channel_label: str = "ASSETS",
+) -> dict[str, Any]:
+    """Short Discord webhook: counts only; full lists are meant to be sent as attachments."""
+    desc = (
+        f"**Scope:** `{domain}` · **Run:** `{run_id}`\n\n"
+        f"**Unique hosts:** `{inventory.get('domains_count', 0)}`\n"
+        f"**URLs:** `{inventory.get('urls_count', 0)}` · "
+        f"**Paths:** `{inventory.get('endpoints_count', 0)}`\n\n"
+        "_Complete lists are attached (`hosts_domains.txt`, `urls.txt`, "
+        "`endpoint_paths.txt`, `inventory_meta.json`)._"
+    )[:_MAX_DESC]
+    embed = {
+        "title": "Surface inventory (full export)",
+        "description": desc,
+        "color": 0x3498DB,
+    }
+    return format_webhook_with_embeds(
+        f"[{channel_label}] Inventory · `{domain}` · `{run_id}`",
+        [embed],
+    )
+
+
+def build_inventory_export_files(
+    inventory: dict[str, Any],
+    domain: str,
+    run_id: str,
+) -> list[tuple[str, bytes]]:
+    """Plain-text / JSON attachments: full deduped hosts, URLs, paths, and metadata."""
+    prefix = _export_filename_prefix(domain, run_id)
+    doms = list(inventory.get("domains") or [])
+    urls = list(inventory.get("urls") or [])
+    paths = list(inventory.get("endpoint_paths") or [])
+    meta = {
+        "apex": inventory.get("apex"),
+        "domain_scope": domain,
+        "run_id": run_id,
+        "domains_count": inventory.get("domains_count", len(doms)),
+        "urls_count": inventory.get("urls_count", len(urls)),
+        "endpoints_count": inventory.get("endpoints_count", len(paths)),
+    }
+    return [
+        (f"{prefix}_hosts_domains.txt", "\n".join(doms).encode("utf-8")),
+        (f"{prefix}_urls.txt", "\n".join(urls).encode("utf-8")),
+        (f"{prefix}_endpoint_paths.txt", "\n".join(paths).encode("utf-8")),
+        (f"{prefix}_inventory_meta.json", json.dumps(meta, indent=2).encode("utf-8")),
+    ]
+
+
+def build_final_scan_export_files(
+    findings: list[Finding],
+    assets: list[Asset],
+    run_id: str,
+    domain: str,
+) -> list[tuple[str, bytes]]:
+    """End-of-run attachments: NDJSON findings + deduped asset hostnames."""
+    prefix = _export_filename_prefix(domain, run_id)
+    lines = [json.dumps(f.to_dict(), default=str) for f in findings]
+    findings_bytes = "\n".join(lines).encode("utf-8")
+    idents = sorted(
+        {a.identifier.strip() for a in assets if (a.identifier or "").strip()}
+    )
+    assets_bytes = "\n".join(idents).encode("utf-8")
+    summary = {
+        "domain_scope": domain,
+        "run_id": run_id,
+        "findings_count": len(findings),
+        "assets_count": len(assets),
+    }
+    return [
+        (f"{prefix}_findings.jsonl", findings_bytes),
+        (f"{prefix}_assets.txt", assets_bytes),
+        (f"{prefix}_run_summary.json", json.dumps(summary, indent=2).encode("utf-8")),
+    ]
+
+
 def format_surface_inventory_payload(
     inventory: dict[str, Any],
     run_id: str,
@@ -317,6 +403,7 @@ def format_summary_payload(
     *,
     total_assets: int,
     findings: list[Finding],
+    channel_label: str = "ASSETS",
 ) -> dict[str, Any]:
     by_sev: dict[str, int] = {}
     for f in findings:
@@ -341,6 +428,6 @@ def format_summary_payload(
         "color": 0x1ABC9C,
     }
     return format_webhook_with_embeds(
-        f"[SUMMARY] `{domain}` complete · `{len(findings)}` finding(s)",
+        f"[{channel_label}] `{domain}` complete · `{len(findings)}` finding(s)",
         [embed],
     )

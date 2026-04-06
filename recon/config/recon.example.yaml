@@ -96,6 +96,10 @@ alerts:
   min_severity: high
   batch_summaries: true
   deduplicate: true
+  # Full hosts/URLs/paths + findings as Discord attachments (not truncated samples).
+  discord_attach_full_file_exports: true
+  # Post the same file bundles to every configured DISCORD_WEBHOOK_* channel.
+  discord_broadcast_file_exports_all_channels: true
 
 execution:
   mode: sequential

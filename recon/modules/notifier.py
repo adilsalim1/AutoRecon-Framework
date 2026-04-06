@@ -11,8 +11,13 @@ from recon.core.config_loader import AppConfig
 from recon.core.logger import get_logger
 from recon.models.assets import Asset
 from recon.models.findings import Finding, Severity
-from recon.modules.discord_delivery import run_discord_posts_sync
+from recon.modules.discord_delivery import (
+    multipart_jobs_for_webhook,
+    run_discord_multipart_posts_sync,
+    run_discord_posts_sync,
+)
 from recon.modules.discord_router import (
+    ALL_DISCORD_CHANNEL_KEYS,
     CH_ASSETS,
     CH_CRITICAL,
     CH_PORTS,
@@ -25,6 +30,8 @@ from recon.modules.discord_router import (
     route_finding_channel,
 )
 from recon.modules.message_formatter import (
+    build_final_scan_export_files,
+    build_inventory_export_files,
     format_asset_discovery_payloads,
     format_critical_subdomain_payload,
     format_finding_embed,
@@ -32,6 +39,7 @@ from recon.modules.message_formatter import (
     format_staging_asset_payload,
     format_summary_payload,
     format_surface_inventory_payload,
+    format_surface_inventory_summary_payload,
     format_tech_profile_payload,
     format_webhook_with_embeds,
 )
@@ -285,6 +293,8 @@ class DiscordMultiChannelNotifier:
     http_retries: int = 3
     http_timeout_seconds: float = 35.0
     staging_batch_max: int = 30
+    attach_full_file_exports: bool = True
+    broadcast_file_exports_all_channels: bool = True
     _seen: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set), repr=False
     )
@@ -304,6 +314,10 @@ class DiscordMultiChannelNotifier:
             http_retries=max(1, config.alerts.discord_http_retries),
             http_timeout_seconds=max(5.0, config.alerts.discord_http_timeout_seconds),
             staging_batch_max=max(5, config.alerts.discord_staging_batch_max),
+            attach_full_file_exports=bool(config.alerts.discord_attach_full_file_exports),
+            broadcast_file_exports_all_channels=bool(
+                config.alerts.discord_broadcast_file_exports_all_channels
+            ),
         )
 
     def _url(self, channel: str) -> str | None:
@@ -472,14 +486,86 @@ class DiscordMultiChannelNotifier:
         domain: str,
     ) -> None:
         """Post deduplicated hosts / URLs / paths after enumeration + URL harvest."""
-        url = self._url(CH_ASSETS)
-        if not url:
+        targets: tuple[str, ...] = (
+            ALL_DISCORD_CHANNEL_KEYS
+            if self.attach_full_file_exports and self.broadcast_file_exports_all_channels
+            else (CH_ASSETS,)
+        )
+        for ch in targets:
+            url = self._url(ch)
+            if not url:
+                continue
+            dk = f"{ch}:surface_inv:{run_id}"
+            if self._dedupe(ch, dk):
+                continue
+            if self.attach_full_file_exports:
+                pl = format_surface_inventory_summary_payload(
+                    inventory,
+                    run_id,
+                    domain,
+                    channel_label=ch.upper(),
+                )
+                files = build_inventory_export_files(inventory, domain, run_id)
+                for job in multipart_jobs_for_webhook(url, pl, files):
+                    run_discord_multipart_posts_sync(
+                        [job],
+                        retries=self.http_retries,
+                        timeout_seconds=self.http_timeout_seconds,
+                    )
+            else:
+                if ch != CH_ASSETS:
+                    continue
+                pl = format_surface_inventory_payload(inventory, run_id, domain)
+                self._post_now(CH_ASSETS, pl)
+
+    def send_full_run_file_exports(
+        self,
+        findings: list[Finding],
+        assets: list[Asset],
+        run_id: str,
+        domain: str,
+    ) -> None:
+        """
+        After scanning: attach complete findings (jsonl), asset list, run summary.
+        Respects attach_full_file_exports and broadcast_file_exports_all_channels.
+        """
+        if not self.attach_full_file_exports:
             return
-        dk = f"{CH_ASSETS}:surface_inv:{run_id}"
-        if self._dedupe(CH_ASSETS, dk):
+        if self.broadcast_file_exports_all_channels:
+            targets = ALL_DISCORD_CHANNEL_KEYS
+        elif self._url(CH_ASSETS):
+            targets = (CH_ASSETS,)
+        elif self._url(CH_SUMMARY):
+            targets = (CH_SUMMARY,)
+        else:
             return
-        pl = format_surface_inventory_payload(inventory, run_id, domain)
-        self._post_now(CH_ASSETS, pl)
+        files = build_final_scan_export_files(findings, assets, run_id, domain)
+        for ch in targets:
+            url = self._url(ch)
+            if not url:
+                continue
+            dk = f"{ch}:final_export:{run_id}"
+            if self._dedupe(ch, dk):
+                continue
+            pl = format_webhook_with_embeds(
+                f"[{ch.upper()}] **Full run export** · `{domain}` · `{run_id}`",
+                [
+                    {
+                        "title": "Findings & assets (attachments)",
+                        "description": (
+                            f"**Findings:** `{len(findings)}` · **Assets:** `{len(assets)}`\n\n"
+                            "_Attached: `findings.jsonl`, `assets.txt`, `run_summary.json`._"
+                        )[:4090],
+                        "color": 0x2ECC71,
+                    }
+                ],
+            )
+            for job in multipart_jobs_for_webhook(url, pl, files):
+                run_discord_multipart_posts_sync(
+                    [job],
+                    retries=self.http_retries,
+                    timeout_seconds=self.http_timeout_seconds,
+                )
 
     def send_asset_discovery(self, assets: list[Asset], run_id: str, domain: str) -> None:
         url = self._url(CH_ASSETS)
@@ -543,20 +629,23 @@ class DiscordMultiChannelNotifier:
         total_assets: int,
         findings: list[Finding],
     ) -> None:
-        url = self._url(CH_SUMMARY)
-        if not url:
+        # Pipeline summary → assets-discovered webhook when set; else legacy SUMMARY.
+        ch = CH_ASSETS if self._url(CH_ASSETS) else CH_SUMMARY
+        if not self._url(ch):
             return
-        dk = f"{CH_SUMMARY}:{run_id}"
-        if self._dedupe(CH_SUMMARY, dk):
+        dk = f"{ch}:pipeline_summary:{run_id}"
+        if self._dedupe(ch, dk):
             return
+        label = "ASSETS" if ch == CH_ASSETS else "SUMMARY"
         pl = format_summary_payload(
             report,
             run_id,
             domain,
             total_assets=total_assets,
             findings=findings,
+            channel_label=label,
         )
-        self._post_now(CH_SUMMARY, pl)
+        self._post_now(ch, pl)
 
     def ingest_scan_finding(self, finding: Finding, run_id: str, domain: str) -> None:
         """

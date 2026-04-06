@@ -17,6 +17,18 @@ CH_SECRETS = "secrets"
 CH_STAGING = "staging"
 CH_SUMMARY = "summary"
 
+# Iteration order for “post the same export to every configured webhook”
+ALL_DISCORD_CHANNEL_KEYS: tuple[str, ...] = (
+    CH_VULNERABILITIES,
+    CH_TECH,
+    CH_PORTS,
+    CH_ASSETS,
+    CH_CRITICAL,
+    CH_SECRETS,
+    CH_STAGING,
+    CH_SUMMARY,
+)
+
 
 def is_critical_host_asset(asset: Asset) -> bool:
     """High-signal hosts for immediate critical-channel alerts."""
